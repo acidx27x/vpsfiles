@@ -28,6 +28,8 @@ IPv6 server: fd52:52:52::1
 
 `install.sh` generates one AmneziaWG obfuscation parameter set and saves it in `obfuscation.env`. Future clients reuse the saved values so existing clients do not need redistribution after each new client is created. You can override generated values during install with `AWG_MTU`, `AWG_JC`, `AWG_JMIN`, `AWG_JMAX`, `AWG_S1`, `AWG_S2`, `AWG_S3`, `AWG_S4`, `AWG_H1`, `AWG_H2`, `AWG_H3`, `AWG_H4`, and `AWG_I1`.
 
+For AmneziaWG 2.0, generated `H1`-`H4` values are non-overlapping ranges like `123-456`. The range is written directly into server and client configs; AmneziaWG chooses values from that range at runtime.
+
 ## Client Commands
 
 Create a new client with a preshared key, add it to the server config, try to add it to the live `awg0` interface, and write a QR code file:
