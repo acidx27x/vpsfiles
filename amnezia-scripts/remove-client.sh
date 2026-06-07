@@ -94,7 +94,7 @@ main() {
   validate_client_name "${client_name}"
 
   client_dir="clients/${client_name}"
-  client_conf="${client_dir}/awg0.conf"
+  client_conf="${client_dir}/awg0-${client_name}.conf"
   pub_key_file="${client_dir}/${client_name}.pub"
 
   [[ -d "${client_dir}" ]] || die "client does not exist: ${client_name}"

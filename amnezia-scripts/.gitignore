@@ -6,7 +6,6 @@ last-ip6.txt
 obfuscation.env
 server-endpoint.txt
 server-endpoint6.txt
-server-interface-name.txt
 server-interface.txt
 server-net.txt
 server-net6.txt

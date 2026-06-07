@@ -99,7 +99,7 @@ add_peer_block() {
   cp "${server_config}" "${tmp_file}"
   {
     printf '\n[Peer]\n'
-    printf '# %s\n' "${client_name}"
+    printf '# Client: %s\n' "${client_name}"
     printf 'PublicKey = %s\n' "${pub_key}"
     printf 'PresharedKey = %s\n' "${psk}"
     printf 'AllowedIPs = %s\n' "${allowed_ips}"
@@ -161,7 +161,7 @@ main() {
   awg_if="$(read_file_or_default server-interface.txt "awg0")"
   server_config="${AWG_DIR}/${awg_if}.conf"
   client_dir="clients/${client_name}"
-  client_conf="${client_dir}/awg0.conf"
+  client_conf="${client_dir}/awg0-${client_name}.conf"
   pub_key_file="${client_dir}/${client_name}.pub"
   psk_file="${client_dir}/${client_name}.psk"
 

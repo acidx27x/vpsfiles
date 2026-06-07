@@ -93,7 +93,7 @@ client_exists_with_ip() {
     if grep -qF "${ip}/" "${conf_file}"; then
       return 0
     fi
-  done < <(find clients -mindepth 2 -maxdepth 2 -name awg0.conf -type f 2>/dev/null)
+  done < <(find clients -mindepth 2 -maxdepth 2 -name 'awg0*conf' -type f 2>/dev/null)
 
   return 1
 }
@@ -232,6 +232,7 @@ main() {
   psk="$(cat "${client_dir}/${client_name}.psk")"
 
   sed \
+    -e "s|:CLIENT_NAME:|$(sed_escape "${client_name}")|g" \
     -e "s|:CLIENT_IP:|$(sed_escape "${ip}")|g" \
     -e "s|:CLIENT_IP6:|$(sed_escape "${ip6}")|g" \
     -e "s|:CLIENT_KEY:|$(sed_escape "${key}")|g" \
@@ -253,8 +254,8 @@ main() {
     -e "s|:AWG_H3:|$(sed_escape "${AWG_H3}")|g" \
     -e "s|:AWG_H4:|$(sed_escape "${AWG_H4}")|g" \
     -e "s|:AWG_I1:|$(sed_escape "${AWG_I1}")|g" \
-    awg0-client.example.conf > "${client_dir}/awg0.conf"
-  chmod 600 "${client_dir}/awg0.conf"
+    awg0-client.example.conf > "${client_dir}/awg0-${client_name}.conf"
+  chmod 600 "${client_dir}/awg0-${client_name}.conf"
 
   add_peer_args=()
   if [[ "${VERBOSE}" -eq 1 ]]; then
@@ -276,15 +277,15 @@ main() {
     printf '%s %s\n' "${ip}" "${client_name}" >> /etc/hosts
   fi
 
-  info "Created config: ${client_dir}/awg0.conf"
+  info "Created config: ${client_dir}/awg0-${client_name}.conf"
   if command -v qrencode >/dev/null 2>&1; then
     if [[ "${VERBOSE}" -eq 1 ]]; then
-      qrencode -t ansiutf8 < "${client_dir}/awg0.conf" | tee "${client_dir}/awg0-qrcode.txt"
+      qrencode -t ansiutf8 < "${client_dir}/awg0-${client_name}.conf" | tee "${client_dir}/awg0-${client_name}-qrcode.txt"
     else
-      qrencode -t ansiutf8 < "${client_dir}/awg0.conf" > "${client_dir}/awg0-qrcode.txt"
+      qrencode -t ansiutf8 < "${client_dir}/awg0-${client_name}.conf" > "${client_dir}/awg0-${client_name}-qrcode.txt"
     fi
-    chmod 600 "${client_dir}/awg0-qrcode.txt"
-    info "Created QR code text: ${client_dir}/awg0-qrcode.txt"
+    chmod 600 "${client_dir}/awg0-${client_name}-qrcode.txt"
+    info "Created QR code text: ${client_dir}/awg0-${client_name}-qrcode.txt"
   fi
   verbose "AmneziaWG interface: ${awg_if}"
 }

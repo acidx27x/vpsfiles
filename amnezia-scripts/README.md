@@ -90,7 +90,7 @@ sudo ./uninstall.sh
 
 ## Client Setup
 
-Use the generated `clients/<name>/awg0.conf` file on the client device.
+Use the generated `clients/<name>/awg0-<name>.conf` file on the client device.
 
 Install AmneziaWG tools on the client first. The generated config uses native AmneziaWG fields and should be imported into an AmneziaWG-capable client, not a plain WireGuard-only client.
 
@@ -116,7 +116,7 @@ To route only VPN subnet traffic, edit `awg0-client.example.conf` before creatin
 
 Generated clients include a preshared key. The client template includes `PresharedKey`, and `add-peer.sh` requires `clients/<name>/<name>.psk` before adding the peer to the server config or live interface. Existing clients without a `.psk` are not backfilled; recreate them with `add-client.sh`.
 
-The QR code is written to `clients/<name>/awg0-qrcode.txt`; use `--verbose` with `add-client.sh` to also print the QR code in the terminal.
+The QR code is written to `clients/<name>/awg0-<name>-qrcode.txt`; use `--verbose` with `add-client.sh` to also print the QR code in the terminal.
 
 ## Notes
 
