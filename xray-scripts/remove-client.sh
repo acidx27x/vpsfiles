@@ -57,7 +57,7 @@ remove_client_from_config() {
   local service="$4"
   local tmp_file=""
 
-  tmp_file="$(mktemp)"
+  tmp_file="$(mktemp --suffix=.json)"
   jq \
     --arg tag "${INBOUND_TAG}" \
     --arg uuid "${client_uuid}" \

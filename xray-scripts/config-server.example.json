@@ -25,7 +25,9 @@
             "www.firefox.com"
           ],
           "privateKey": ":PRIVATE_KEY:",
-          "shortIds": []
+          "shortIds": [
+            ":SERVER_SHORT_ID:"
+          ]
         },
         "sockopt": {
           "tcpFastOpen": true,

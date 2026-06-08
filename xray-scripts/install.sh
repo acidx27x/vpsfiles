@@ -149,6 +149,7 @@ backup_existing_configs() {
     "${SCRIPT_DIR}/server-endpoint.txt" \
     "${SCRIPT_DIR}/server-endpoint6.txt" \
     "${SCRIPT_DIR}/server-port.txt" \
+    "${SCRIPT_DIR}/server-short-id.txt" \
     "${SCRIPT_DIR}/reality-target.txt" \
     "${SCRIPT_DIR}/reality-server-name.txt" \
     "${SCRIPT_DIR}/reality-private-key.txt" \
@@ -188,6 +189,7 @@ backup_existing_configs() {
     "${SCRIPT_DIR}/server-endpoint.txt" \
     "${SCRIPT_DIR}/server-endpoint6.txt" \
     "${SCRIPT_DIR}/server-port.txt" \
+    "${SCRIPT_DIR}/server-short-id.txt" \
     "${SCRIPT_DIR}/reality-target.txt" \
     "${SCRIPT_DIR}/reality-server-name.txt" \
     "${SCRIPT_DIR}/reality-private-key.txt" \
@@ -221,21 +223,26 @@ generate_reality_keys() {
   [[ -n "${XRAY_PUBLIC_KEY}" ]] || die "could not parse REALITY public key from xray x25519 output"
 }
 
+generate_short_id() {
+  openssl rand -hex 8
+}
+
 render_server_config() {
   local tmp_file=""
 
-  tmp_file="$(mktemp)"
+  tmp_file="$(mktemp --suffix=.json)"
   jq \
     --argjson port "${XRAY_PORT}" \
     --arg target "${XRAY_TARGET}" \
     --arg server_name "${XRAY_SERVER_NAME}" \
     --arg private_key "${XRAY_PRIVATE_KEY}" \
+    --arg short_id "${XRAY_SERVER_SHORT_ID}" \
     '.inbounds[0].port = $port
       | .inbounds[0].settings.clients = []
       | .inbounds[0].streamSettings.realitySettings.target = $target
       | .inbounds[0].streamSettings.realitySettings.serverNames = [$server_name]
       | .inbounds[0].streamSettings.realitySettings.privateKey = $private_key
-      | .inbounds[0].streamSettings.realitySettings.shortIds = []' \
+      | .inbounds[0].streamSettings.realitySettings.shortIds = [$short_id]' \
     "${SERVER_TEMPLATE}" > "${tmp_file}"
 
   xray run -test -config "${tmp_file}" >/dev/null
@@ -250,6 +257,7 @@ prepare_script_state() {
   printf '%s\n' "${XRAY_ENDPOINT}" > "${SCRIPT_DIR}/server-endpoint.txt"
   printf '%s\n' "${XRAY_ENDPOINT6}" > "${SCRIPT_DIR}/server-endpoint6.txt"
   printf '%s\n' "${XRAY_PORT}" > "${SCRIPT_DIR}/server-port.txt"
+  printf '%s\n' "${XRAY_SERVER_SHORT_ID}" > "${SCRIPT_DIR}/server-short-id.txt"
   printf '%s\n' "${XRAY_TARGET}" > "${SCRIPT_DIR}/reality-target.txt"
   printf '%s\n' "${XRAY_SERVER_NAME}" > "${SCRIPT_DIR}/reality-server-name.txt"
   printf '%s\n' "${XRAY_PRIVATE_KEY}" > "${SCRIPT_DIR}/reality-private-key.txt"
@@ -315,6 +323,7 @@ print_summary() {
   echo "IPv6 endpoint:     ${XRAY_ENDPOINT6}"
   echo "REALITY target:    ${XRAY_TARGET}"
   echo "REALITY SNI:       ${XRAY_SERVER_NAME}"
+  echo "Server shortId:    ${XRAY_SERVER_SHORT_ID}"
   echo "Clients:           none"
   echo
   echo "Add clients with:"
@@ -351,6 +360,7 @@ main() {
   install_packages
   install_xray
   generate_reality_keys
+  XRAY_SERVER_SHORT_ID="$(generate_short_id)"
   render_server_config
   prepare_script_state
   enable_bbr_tuning

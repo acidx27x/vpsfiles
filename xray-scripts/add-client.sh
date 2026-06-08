@@ -108,7 +108,7 @@ add_client_to_config() {
   local service="$5"
   local tmp_file=""
 
-  tmp_file="$(mktemp)"
+  tmp_file="$(mktemp --suffix=.json)"
   jq \
     --arg tag "${INBOUND_TAG}" \
     --arg name "${client_name}" \
@@ -156,7 +156,7 @@ write_client_artifacts() {
   uri="vless://${client_uuid}@${uri_host}:${port}?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&sni=$(url_encode "${server_name}")&fp=firefox&pbk=$(url_encode "${public_key}")&sid=${short_id}&spx=%2F#$(url_encode "${client_name}")"
   printf '%s\n' "${uri}" > "${client_dir}/vless-${client_name}.txt"
 
-  tmp_file="$(mktemp)"
+  tmp_file="$(mktemp --suffix=.json)"
   jq \
     --arg endpoint "${config_address}" \
     --argjson port "${port}" \

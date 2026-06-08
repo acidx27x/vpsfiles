@@ -15,6 +15,8 @@ sudo ./install.sh
 
 The installer uses the official XTLS Xray install script, writes `/usr/local/etc/xray/config.json`, enables BBR-related sysctl settings, opens the Xray TCP port with UFW, validates the generated config, and starts `xray`.
 
+The installed server config starts with an empty VLESS client list. It still contains one generated unused REALITY server shortId because Xray requires `realitySettings.shortIds` to be a non-empty list.
+
 Defaults:
 
 ```text
@@ -85,7 +87,7 @@ fp=chrome
 
 Client names may contain only letters, numbers, dot, underscore, and dash.
 
-The scripts keep generated endpoint, IPv6 endpoint, port, SNI, and REALITY key state in files next to the scripts. The server config remains the source of truth for active clients.
+The scripts keep generated endpoint, IPv6 endpoint, port, server shortId, SNI, and REALITY key state in files next to the scripts. The server config remains the source of truth for active clients.
 
 References:
 
