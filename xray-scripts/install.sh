@@ -227,6 +227,36 @@ generate_short_id() {
   openssl rand -hex 8
 }
 
+xray_service_user() {
+  local service="$1"
+  local user=""
+
+  user="$(systemctl cat "${service}" 2>/dev/null | awk -F= '
+    $1 ~ /^[[:space:]]*User[[:space:]]*$/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      user = $2
+    }
+    END { print user }
+  ')"
+  printf '%s\n' "${user:-root}"
+}
+
+install_xray_config() {
+  local source_file="$1"
+  local dest_file="$2"
+  local service="$3"
+  local service_user=""
+  local service_group=""
+
+  service_user="$(xray_service_user "${service}")"
+  if id "${service_user}" >/dev/null 2>&1; then
+    service_group="$(id -gn "${service_user}")"
+    install -o "${service_user}" -g "${service_group}" -m 600 "${source_file}" "${dest_file}"
+  else
+    install -m 600 "${source_file}" "${dest_file}"
+  fi
+}
+
 render_server_config() {
   local tmp_file=""
 
@@ -247,7 +277,7 @@ render_server_config() {
 
   xray run -test -config "${tmp_file}" >/dev/null
   install -d -m 755 "$(dirname "${XRAY_CONFIG}")"
-  install -m 600 "${tmp_file}" "${XRAY_CONFIG}"
+  install_xray_config "${tmp_file}" "${XRAY_CONFIG}" "${XRAY_SERVICE}"
   rm -f "${tmp_file}"
 }
 

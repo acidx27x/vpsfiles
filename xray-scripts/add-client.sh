@@ -73,6 +73,36 @@ require_inbound_tag() {
   jq -e --arg tag "${INBOUND_TAG}" 'any(.inbounds[]?; .tag == $tag)' "${config_file}" >/dev/null || die "inbound tag is missing from ${config_file}: ${INBOUND_TAG}"
 }
 
+xray_service_user() {
+  local service="$1"
+  local user=""
+
+  user="$(systemctl cat "${service}" 2>/dev/null | awk -F= '
+    $1 ~ /^[[:space:]]*User[[:space:]]*$/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      user = $2
+    }
+    END { print user }
+  ')"
+  printf '%s\n' "${user:-root}"
+}
+
+install_xray_config() {
+  local source_file="$1"
+  local dest_file="$2"
+  local service="$3"
+  local service_user=""
+  local service_group=""
+
+  service_user="$(xray_service_user "${service}")"
+  if id "${service_user}" >/dev/null 2>&1; then
+    service_group="$(id -gn "${service_user}")"
+    install -o "${service_user}" -g "${service_group}" -m 600 "${source_file}" "${dest_file}"
+  else
+    install -m 600 "${source_file}" "${dest_file}"
+  fi
+}
+
 url_encode() {
   jq -rn --arg value "$1" '$value | @uri'
 }
@@ -125,7 +155,7 @@ add_client_to_config() {
     "${config_file}" > "${tmp_file}"
 
   xray run -test -config "${tmp_file}" >/dev/null
-  install -m 600 "${tmp_file}" "${config_file}"
+  install_xray_config "${tmp_file}" "${config_file}" "${service}"
   rm -f "${tmp_file}"
   systemctl restart "${service}"
 }
