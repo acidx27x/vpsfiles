@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Full Xray VLESS REALITY installer for this script bundle.
+# Run from vpsfiles/xray-scripts, then add clients with ./add-client.sh.
+
+XRAY_PORT_DEFAULT="443"
+XRAY_TARGET_DEFAULT="www.firefox.com:443"
+XRAY_SERVER_NAME_DEFAULT="www.firefox.com"
+XRAY_CONFIG_DEFAULT="/usr/local/etc/xray/config.json"
+XRAY_SERVICE_DEFAULT="xray"
+SYSCTL_FILE="/etc/sysctl.d/99-xray-bbr.conf"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVER_TEMPLATE="${SCRIPT_DIR}/config-server.example.json"
+CLIENTS_DIR="${SCRIPT_DIR}/clients"
+BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
+
+XRAY_PORT="${XRAY_PORT:-${XRAY_PORT_DEFAULT}}"
+XRAY_ENDPOINT="${XRAY_ENDPOINT:-}"
+XRAY_ENDPOINT6="${XRAY_ENDPOINT6:-}"
+XRAY_TARGET="${XRAY_TARGET:-${XRAY_TARGET_DEFAULT}}"
+XRAY_SERVER_NAME="${XRAY_SERVER_NAME:-${XRAY_SERVER_NAME_DEFAULT}}"
+XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
+XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "ERROR: run as root:"
+    echo "  sudo bash ${0}"
+    exit 1
+  fi
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+require_files() {
+  local missing=0
+
+  for file in \
+    "${SERVER_TEMPLATE}" \
+    "${SCRIPT_DIR}/add-client.sh" \
+    "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/uninstall.sh"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "ERROR: required file is missing: ${file}"
+      missing=1
+    fi
+  done
+
+  if [[ "${missing}" -ne 0 ]]; then
+    exit 1
+  fi
+}
+
+require_supported_os() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "this installer currently supports Debian/Ubuntu systems with apt"
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    die "this installer expects systemd"
+  fi
+}
+
+prompt() {
+  local name="$1"
+  local label="$2"
+  local default="$3"
+  local value=""
+
+  read -r -p "${label} [${default}]: " value
+  printf -v "${name}" '%s' "${value:-${default}}"
+}
+
+confirm() {
+  local message="$1"
+  local answer=""
+
+  read -r -p "${message} [y/N]: " answer
+  case "${answer}" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_port() {
+  local port="$1"
+
+  [[ "${port}" =~ ^[0-9]+$ ]] || die "port must be a number: ${port}"
+  (( port >= 1 && port <= 65535 )) || die "port must be between 1 and 65535: ${port}"
+}
+
+detect_public_ip() {
+  local ip_addr=""
+
+  if command -v curl >/dev/null 2>&1; then
+    ip_addr="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    if [[ -z "${ip_addr}" ]]; then
+      ip_addr="$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+  fi
+
+  echo "${ip_addr}"
+}
+
+detect_public_ip6() {
+  local ip_addr=""
+
+  if command -v curl >/dev/null 2>&1; then
+    ip_addr="$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
+    if [[ -z "${ip_addr}" ]]; then
+      ip_addr="$(curl -6 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
+    fi
+  fi
+
+  echo "${ip_addr}"
+}
+
+install_packages() {
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl \
+    jq \
+    openssl \
+    qrencode \
+    ufw
+}
+
+install_xray() {
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  command -v xray >/dev/null 2>&1 || die "xray is missing after installation"
+}
+
+backup_existing_configs() {
+  local timestamp=""
+  local backup_dir=""
+  local found=0
+  local path=""
+
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  backup_dir="${BACKUP_ROOT}/${timestamp}"
+
+  for path in \
+    "${XRAY_CONFIG}" \
+    "${SYSCTL_FILE}" \
+    "${SCRIPT_DIR}/server-endpoint.txt" \
+    "${SCRIPT_DIR}/server-endpoint6.txt" \
+    "${SCRIPT_DIR}/server-port.txt" \
+    "${SCRIPT_DIR}/reality-target.txt" \
+    "${SCRIPT_DIR}/reality-server-name.txt" \
+    "${SCRIPT_DIR}/reality-private-key.txt" \
+    "${SCRIPT_DIR}/reality-public-key.txt" \
+    "${SCRIPT_DIR}/xray-config-path.txt" \
+    "${SCRIPT_DIR}/xray-service.txt"; do
+    if [[ -e "${path}" ]]; then
+      found=1
+      break
+    fi
+  done
+  if [[ -d "${CLIENTS_DIR}" && -n "$(find "${CLIENTS_DIR}" -mindepth 1 -maxdepth 1 ! -name .gitkeep -print -quit 2>/dev/null)" ]]; then
+    found=1
+  fi
+
+  if [[ "${found}" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo
+  echo "Existing Xray/script config was found."
+  echo "Backup destination: ${backup_dir}"
+  if ! confirm "Back up existing config before continuing?"; then
+    echo "Aborted before making changes."
+    exit 1
+  fi
+
+  mkdir -p "${backup_dir}/xray-config" "${backup_dir}/script-files"
+
+  if [[ -e "${XRAY_CONFIG}" ]]; then
+    cp -a "${XRAY_CONFIG}" "${backup_dir}/xray-config/"
+  fi
+  if [[ -e "${SYSCTL_FILE}" ]]; then
+    cp -a "${SYSCTL_FILE}" "${backup_dir}/script-files/"
+  fi
+  for path in \
+    "${SCRIPT_DIR}/server-endpoint.txt" \
+    "${SCRIPT_DIR}/server-endpoint6.txt" \
+    "${SCRIPT_DIR}/server-port.txt" \
+    "${SCRIPT_DIR}/reality-target.txt" \
+    "${SCRIPT_DIR}/reality-server-name.txt" \
+    "${SCRIPT_DIR}/reality-private-key.txt" \
+    "${SCRIPT_DIR}/reality-public-key.txt" \
+    "${SCRIPT_DIR}/xray-config-path.txt" \
+    "${SCRIPT_DIR}/xray-service.txt"; do
+    if [[ -e "${path}" ]]; then
+      cp -a "${path}" "${backup_dir}/script-files/"
+    fi
+  done
+  if [[ -d "${CLIENTS_DIR}" ]]; then
+    cp -a "${CLIENTS_DIR}" "${backup_dir}/script-files/"
+  fi
+
+  echo "Backup complete: ${backup_dir}"
+}
+
+enable_bbr_tuning() {
+  printf 'net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr\nnet.ipv4.tcp_fastopen=3\n' > "${SYSCTL_FILE}"
+  sysctl --system >/dev/null
+}
+
+generate_reality_keys() {
+  local key_output=""
+
+  key_output="$(xray x25519)"
+  XRAY_PRIVATE_KEY="$(printf '%s\n' "${key_output}" | awk -F': *' '/Private key|PrivateKey/ {print $2; exit}')"
+  XRAY_PUBLIC_KEY="$(printf '%s\n' "${key_output}" | awk -F': *' '/Public key|PublicKey|Password/ {print $2; exit}')"
+
+  [[ -n "${XRAY_PRIVATE_KEY}" ]] || die "could not parse REALITY private key from xray x25519 output"
+  [[ -n "${XRAY_PUBLIC_KEY}" ]] || die "could not parse REALITY public key from xray x25519 output"
+}
+
+render_server_config() {
+  local tmp_file=""
+
+  tmp_file="$(mktemp)"
+  jq \
+    --argjson port "${XRAY_PORT}" \
+    --arg target "${XRAY_TARGET}" \
+    --arg server_name "${XRAY_SERVER_NAME}" \
+    --arg private_key "${XRAY_PRIVATE_KEY}" \
+    '.inbounds[0].port = $port
+      | .inbounds[0].settings.clients = []
+      | .inbounds[0].streamSettings.realitySettings.target = $target
+      | .inbounds[0].streamSettings.realitySettings.serverNames = [$server_name]
+      | .inbounds[0].streamSettings.realitySettings.privateKey = $private_key
+      | .inbounds[0].streamSettings.realitySettings.shortIds = []' \
+    "${SERVER_TEMPLATE}" > "${tmp_file}"
+
+  xray run -test -config "${tmp_file}" >/dev/null
+  install -d -m 755 "$(dirname "${XRAY_CONFIG}")"
+  install -m 600 "${tmp_file}" "${XRAY_CONFIG}"
+  rm -f "${tmp_file}"
+}
+
+prepare_script_state() {
+  mkdir -p "${CLIENTS_DIR}"
+
+  printf '%s\n' "${XRAY_ENDPOINT}" > "${SCRIPT_DIR}/server-endpoint.txt"
+  printf '%s\n' "${XRAY_ENDPOINT6}" > "${SCRIPT_DIR}/server-endpoint6.txt"
+  printf '%s\n' "${XRAY_PORT}" > "${SCRIPT_DIR}/server-port.txt"
+  printf '%s\n' "${XRAY_TARGET}" > "${SCRIPT_DIR}/reality-target.txt"
+  printf '%s\n' "${XRAY_SERVER_NAME}" > "${SCRIPT_DIR}/reality-server-name.txt"
+  printf '%s\n' "${XRAY_PRIVATE_KEY}" > "${SCRIPT_DIR}/reality-private-key.txt"
+  printf '%s\n' "${XRAY_PUBLIC_KEY}" > "${SCRIPT_DIR}/reality-public-key.txt"
+  printf '%s\n' "${XRAY_CONFIG}" > "${SCRIPT_DIR}/xray-config-path.txt"
+  printf '%s\n' "${XRAY_SERVICE}" > "${SCRIPT_DIR}/xray-service.txt"
+
+  chmod 600 "${SCRIPT_DIR}/reality-private-key.txt" "${SCRIPT_DIR}/reality-public-key.txt"
+  chmod +x \
+    "${SCRIPT_DIR}/add-client.sh" \
+    "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
+}
+
+setup_firewall() {
+  ufw allow "${XRAY_PORT}/tcp" >/dev/null || true
+
+  if ! ufw status | grep -q "Status: active"; then
+    if confirm "UFW is not active. Enable it now?"; then
+      ufw --force enable >/dev/null
+    else
+      echo "Skipped enabling UFW. The Xray TCP port was still added to UFW rules."
+    fi
+  fi
+}
+
+start_xray() {
+  systemctl enable "${XRAY_SERVICE}" >/dev/null
+  systemctl restart "${XRAY_SERVICE}"
+}
+
+collect_settings() {
+  local detected_endpoint=""
+  local detected_endpoint6=""
+  local default_server_name=""
+
+  detected_endpoint="$(detect_public_ip)"
+  detected_endpoint6="$(detect_public_ip6)"
+  default_server_name="${XRAY_TARGET%%:*}"
+
+  prompt XRAY_PORT "Xray VLESS REALITY TCP port" "${XRAY_PORT}"
+  validate_port "${XRAY_PORT}"
+  prompt XRAY_ENDPOINT "Public endpoint clients should connect to" "${XRAY_ENDPOINT:-${detected_endpoint:-$(hostname -f)}}"
+  prompt XRAY_ENDPOINT6 "Public IPv6 endpoint clients can connect to" "${XRAY_ENDPOINT6:-${detected_endpoint6}}"
+  prompt XRAY_TARGET "REALITY target host:port" "${XRAY_TARGET}"
+  prompt XRAY_SERVER_NAME "REALITY serverName/SNI" "${XRAY_SERVER_NAME:-${default_server_name}}"
+
+  [[ -n "${XRAY_ENDPOINT}" ]] || die "public endpoint cannot be empty"
+  [[ -n "${XRAY_TARGET}" ]] || die "REALITY target cannot be empty"
+  [[ -n "${XRAY_SERVER_NAME}" ]] || die "REALITY serverName cannot be empty"
+}
+
+print_summary() {
+  echo
+  echo "============================================================"
+  echo "Xray VLESS REALITY installation complete."
+  echo "============================================================"
+  echo
+  echo "Server config:     ${XRAY_CONFIG}"
+  echo "Systemd service:   ${XRAY_SERVICE}"
+  echo "TCP port:          ${XRAY_PORT}"
+  echo "Client endpoint:   ${XRAY_ENDPOINT}"
+  echo "IPv6 endpoint:     ${XRAY_ENDPOINT6}"
+  echo "REALITY target:    ${XRAY_TARGET}"
+  echo "REALITY SNI:       ${XRAY_SERVER_NAME}"
+  echo "Clients:           none"
+  echo
+  echo "Add clients with:"
+  echo "  cd ${SCRIPT_DIR}"
+  echo "  sudo ./add-client.sh phone"
+  echo "  sudo ./add-client.sh --ipv6-endpoint phone"
+  echo "  sudo ./remove-client.sh phone"
+  echo "  sudo ./uninstall.sh"
+  echo
+  echo "Check status with:"
+  echo "  sudo systemctl status ${XRAY_SERVICE}"
+  echo "  sudo journalctl -u ${XRAY_SERVICE} -n 100 --no-pager"
+}
+
+main() {
+  require_root
+  require_files
+  require_supported_os
+
+  echo "Xray VLESS REALITY full installation"
+  echo
+  collect_settings
+
+  echo
+  echo "This will install packages, install or update Xray with the official XTLS installer,"
+  echo "back up existing config if present, write ${XRAY_CONFIG}, enable BBR sysctl tuning,"
+  echo "configure UFW, and start ${XRAY_SERVICE}."
+  if ! confirm "Continue?"; then
+    echo "Aborted before making changes."
+    exit 1
+  fi
+
+  backup_existing_configs
+  install_packages
+  install_xray
+  generate_reality_keys
+  render_server_config
+  prepare_script_state
+  enable_bbr_tuning
+  setup_firewall
+  start_xray
+  print_summary
+}
+
+main "$@"

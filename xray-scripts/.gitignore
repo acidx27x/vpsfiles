@@ -1,0 +1,12 @@
+clients/*
+!clients/.gitkeep
+install-backups/
+reality-private-key.txt
+reality-public-key.txt
+reality-server-name.txt
+reality-target.txt
+server-endpoint.txt
+server-endpoint6.txt
+server-port.txt
+xray-config-path.txt
+xray-service.txt
