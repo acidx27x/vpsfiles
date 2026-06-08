@@ -1,0 +1,9 @@
+clients/*
+!clients/.gitkeep
+install-backups/
+public-host.txt
+server-port.txt
+telemt-bin-path.txt
+telemt-config-path.txt
+telemt-service.txt
+tls-domain.txt
