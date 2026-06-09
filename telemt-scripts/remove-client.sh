@@ -73,6 +73,24 @@ toml_key_exists() {
   ' "${config_file}"
 }
 
+count_toml_keys() {
+  local config_file="$1"
+  local table="$2"
+
+  awk -v table="${table}" '
+    BEGIN { target = "[" table "]"; in_table = 0; count = 0 }
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+      current = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
+      in_table = (current == target)
+      next
+    }
+    in_table && /^[[:space:]]*#/ { next }
+    in_table && index($0, "=") > 0 { count++ }
+    END { print count }
+  ' "${config_file}"
+}
+
 remove_toml_key() {
   local config_file="$1"
   local table="$2"
@@ -110,6 +128,12 @@ remove_toml_key() {
   fi
 }
 
+restart_service() {
+  local service="$1"
+
+  systemctl restart "${service}" || die "failed to restart ${service}; check service logs"
+}
+
 remove_client_dir() {
   local client_dir="$1"
 
@@ -126,13 +150,16 @@ main() {
 
   local client_name="$1"
   local config_file=""
+  local service=""
   local client_dir=""
   local exists_in_config=0
+  local user_count=0
 
   require_root
   validate_client_name "${client_name}"
 
   config_file="$(read_file_or_default telemt-config-path.txt "/etc/telemt/telemt.toml")"
+  service="$(read_file_or_default telemt-service.txt "telemt")"
   client_dir="${CLIENTS_DIR}/${client_name}"
 
   [[ -f "${config_file}" ]] || die "Telemt config is missing: ${config_file}"
@@ -142,10 +169,15 @@ main() {
   if [[ "${exists_in_config}" -eq 0 && ! -d "${client_dir}" ]]; then
     die "client does not exist: ${client_name}"
   fi
+  user_count="$(count_toml_keys "${config_file}" "access.users")"
+  if [[ "${exists_in_config}" -eq 1 && "${user_count}" -le 1 ]]; then
+    die "refusing to remove the last Telemt client; Telemt requires at least one configured user"
+  fi
 
   info "Removing Telemt client: ${client_name}"
   remove_toml_key "${config_file}" "access.users" "${client_name}"
   remove_toml_key "${config_file}" "access.user_max_unique_ips" "${client_name}"
+  restart_service "${service}"
   remove_client_dir "${client_dir}"
   info "Removed client files for: ${client_name}"
 }

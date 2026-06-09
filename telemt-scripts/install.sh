@@ -8,6 +8,8 @@ TELEMT_PORT_DEFAULT="10443"
 TELEMT_PUBLIC_HOST_DEFAULT=""
 TELEMT_TLS_DOMAIN_DEFAULT="www.google.com"
 TELEMT_MAX_CONNECTIONS_DEFAULT="1000"
+TELEMT_INITIAL_CLIENT_DEFAULT="main"
+TELEMT_INITIAL_MAX_UNIQUE_IPS_DEFAULT="2"
 TELEMT_CONFIG_DEFAULT="/etc/telemt/telemt.toml"
 TELEMT_SERVICE_DEFAULT="telemt"
 TELEMT_BIN_DEFAULT="/bin/telemt"
@@ -23,6 +25,8 @@ TELEMT_PORT="${TELEMT_PORT:-${TELEMT_PORT_DEFAULT}}"
 TELEMT_PUBLIC_HOST="${TELEMT_PUBLIC_HOST:-${TELEMT_PUBLIC_HOST_DEFAULT}}"
 TELEMT_TLS_DOMAIN="${TELEMT_TLS_DOMAIN:-${TELEMT_TLS_DOMAIN_DEFAULT}}"
 TELEMT_MAX_CONNECTIONS="${TELEMT_MAX_CONNECTIONS:-${TELEMT_MAX_CONNECTIONS_DEFAULT}}"
+TELEMT_INITIAL_CLIENT="${TELEMT_INITIAL_CLIENT:-${TELEMT_INITIAL_CLIENT_DEFAULT}}"
+TELEMT_INITIAL_MAX_UNIQUE_IPS="${TELEMT_INITIAL_MAX_UNIQUE_IPS:-${TELEMT_INITIAL_MAX_UNIQUE_IPS_DEFAULT}}"
 TELEMT_CONFIG="${TELEMT_CONFIG:-${TELEMT_CONFIG_DEFAULT}}"
 TELEMT_SERVICE="${TELEMT_SERVICE:-${TELEMT_SERVICE_DEFAULT}}"
 TELEMT_BIN="${TELEMT_BIN:-${TELEMT_BIN_DEFAULT}}"
@@ -104,6 +108,21 @@ validate_non_negative_int() {
   [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a non-negative integer"
 }
 
+validate_positive_int() {
+  local name="$1"
+  local value="$2"
+
+  [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a positive integer"
+  (( value >= 1 )) || die "${name} must be at least 1"
+}
+
+validate_client_name() {
+  local client_name="$1"
+
+  [[ "${client_name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "client name may only contain letters, numbers, dot, underscore, and dash"
+  [[ "${client_name}" != "." && "${client_name}" != ".." ]] || die "invalid client name"
+}
+
 validate_version() {
   [[ "${TELEMT_VERSION}" =~ ^[A-Za-z0-9._-]+$ ]] || die "TELEMT_VERSION contains invalid characters"
 }
@@ -136,6 +155,10 @@ detect_public_ip6() {
 
 sed_escape() {
   printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
+}
+
+generate_secret() {
+  openssl rand -hex 16 | tr -d '\r\n'
 }
 
 download_file() {
@@ -298,10 +321,68 @@ render_server_config() {
     -e "s|:SERVER_PORT:|$(sed_escape "${TELEMT_PORT}")|g" \
     -e "s|:TLS_DOMAIN:|$(sed_escape "${TELEMT_TLS_DOMAIN}")|g" \
     -e "s|:MAX_CONNECTIONS:|$(sed_escape "${TELEMT_MAX_CONNECTIONS}")|g" \
+    -e "s|:INITIAL_CLIENT:|$(sed_escape "${TELEMT_INITIAL_CLIENT}")|g" \
+    -e "s|:INITIAL_SECRET:|$(sed_escape "${TELEMT_INITIAL_SECRET}")|g" \
+    -e "s|:INITIAL_MAX_UNIQUE_IPS:|$(sed_escape "${TELEMT_INITIAL_MAX_UNIQUE_IPS}")|g" \
     "${SERVER_TEMPLATE}" > "${tmp_file}"
 
   install -m 640 -o telemt -g telemt "${tmp_file}" "${TELEMT_CONFIG}"
   rm -f "${tmp_file}"
+}
+
+fetch_client_api() {
+  local client_name="$1"
+  local output_file="$2"
+  local api_url="http://127.0.0.1:9091/v1/users"
+  local attempt=0
+  local tmp_file=""
+
+  tmp_file="$(mktemp)"
+  while (( attempt < 10 )); do
+    if curl -fsS "${api_url}" > "${tmp_file}" 2>/dev/null \
+      && jq -e --arg name "${client_name}" '.data[]? | select(.username == $name)' "${tmp_file}" >/dev/null; then
+      install -m 600 "${tmp_file}" "${output_file}"
+      rm -f "${tmp_file}"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  rm -f "${tmp_file}"
+  die "could not fetch generated Telemt links for ${client_name} from ${api_url}"
+}
+
+write_initial_client_artifacts() {
+  local client_name="${TELEMT_INITIAL_CLIENT}"
+  local secret="${TELEMT_INITIAL_SECRET}"
+  local max_unique_ips="${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
+  local client_dir="${CLIENTS_DIR}/${client_name}"
+  local api_file="${client_dir}/telemt-${client_name}-api.json"
+  local links_file="${client_dir}/telemt-${client_name}-links.txt"
+  local first_link=""
+
+  mkdir -p "${client_dir}"
+  chmod 700 "${client_dir}"
+
+  printf '%s\n' "${secret}" > "${client_dir}/${client_name}.secret"
+  printf '%s\n' "${max_unique_ips}" > "${client_dir}/${client_name}.max-unique-ips"
+  chmod 600 "${client_dir}/${client_name}.secret" "${client_dir}/${client_name}.max-unique-ips"
+
+  fetch_client_api "${client_name}" "${api_file}"
+  jq -r --arg name "${client_name}" '
+    .data[]? | select(.username == $name) |
+    (.links.tls[]? | "tls: \(.)"),
+    (.links.secure[]? | "secure: \(.)"),
+    (.links.classic[]? | "classic: \(.)")
+  ' "${api_file}" > "${links_file}"
+  chmod 600 "${links_file}"
+
+  first_link="$(jq -r --arg name "${client_name}" '.data[]? | select(.username == $name) | (.links.tls[0] // .links.secure[0] // .links.classic[0] // empty)' "${api_file}")"
+  if [[ -n "${first_link}" ]] && command -v qrencode >/dev/null 2>&1; then
+    printf '%s\n' "${first_link}" | qrencode -t ansiutf8 > "${client_dir}/telemt-${client_name}-qrcode.txt"
+    chmod 600 "${client_dir}/telemt-${client_name}-qrcode.txt"
+  fi
 }
 
 install_systemd_service() {
@@ -387,6 +468,10 @@ collect_settings() {
   prompt TELEMT_TLS_DOMAIN "Fake-TLS/SNI masking domain" "${TELEMT_TLS_DOMAIN}"
   prompt TELEMT_MAX_CONNECTIONS "Global Telemt max_connections (0 = unlimited)" "${TELEMT_MAX_CONNECTIONS}"
   validate_non_negative_int "max_connections" "${TELEMT_MAX_CONNECTIONS}"
+  prompt TELEMT_INITIAL_CLIENT "Initial Telemt client name" "${TELEMT_INITIAL_CLIENT}"
+  validate_client_name "${TELEMT_INITIAL_CLIENT}"
+  prompt TELEMT_INITIAL_MAX_UNIQUE_IPS "Initial client max simultaneous unique IPs" "${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
+  validate_positive_int "initial client max unique IPs" "${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
 
   [[ -n "${TELEMT_PUBLIC_HOST}" ]] || die "public host cannot be empty"
   [[ -n "${TELEMT_TLS_DOMAIN}" ]] || die "TLS domain cannot be empty"
@@ -405,13 +490,16 @@ print_summary() {
   echo "Public host:         ${TELEMT_PUBLIC_HOST}"
   echo "TLS masking domain:  ${TELEMT_TLS_DOMAIN}"
   echo "Max connections:     ${TELEMT_MAX_CONNECTIONS}"
-  echo "Clients:             none"
+  echo "Initial client:      ${TELEMT_INITIAL_CLIENT}"
   echo
   echo "Add clients with:"
   echo "  cd ${SCRIPT_DIR}"
   echo "  sudo ./add-client.sh phone"
   echo "  sudo ./remove-client.sh phone"
   echo "  sudo ./uninstall.sh"
+  echo
+  echo "Generated initial client files:"
+  echo "  ${CLIENTS_DIR}/${TELEMT_INITIAL_CLIENT}/telemt-${TELEMT_INITIAL_CLIENT}-links.txt"
   echo
   echo "Check status with:"
   echo "  sudo systemctl status ${TELEMT_SERVICE}"
@@ -430,7 +518,7 @@ main() {
   echo
   echo "This will install packages, download Telemt ${TELEMT_VERSION} from GitHub releases,"
   echo "back up existing config if present, write ${TELEMT_CONFIG}, install a systemd"
-  echo "service, configure UFW, and start ${TELEMT_SERVICE} with no precreated clients."
+  echo "service, configure UFW, and start ${TELEMT_SERVICE} with an initial client."
   if ! confirm "Continue?"; then
     echo "Aborted before making changes."
     exit 1
@@ -441,11 +529,13 @@ main() {
   install_telemt
   ensure_user_group
   setup_dirs
+  TELEMT_INITIAL_SECRET="$(generate_secret)"
   render_server_config
   install_systemd_service
   prepare_script_state
   setup_firewall
   start_telemt
+  write_initial_client_artifacts
   print_summary
 }
 

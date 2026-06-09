@@ -18,21 +18,23 @@ The installer downloads the official Telemt release binary, writes `/etc/telemt/
 Defaults:
 
 ```text
-TCP port:            443
+TCP port:            10443
 Public host:         detected public IPv4, public IPv6, or hostname
-TLS masking domain:  www.cloudflare.com
+TLS masking domain:  www.google.com
 Modes:               secure + Fake-TLS enabled, classic disabled
-Global max conn:     10000
-Initial clients:     none
+Global max conn:     1000
+Initial client:      main
 ```
 
 Changing the TLS masking domain later breaks existing Fake-TLS links, so choose it before creating clients.
 
 `public_host` may be a domain, IPv4 address, or IPv6 address. For IPv6, enter the bare address, for example `2001:db8::10`, not `[2001:db8::10]`; Telemt generates the final `tg://` links from this value.
 
+The installer creates one initial client because Telemt refuses to start with an empty `[access.users]` table. The initial client name defaults to `main` and can be overridden during install.
+
 ## Client Commands
 
-After install, the server starts with an empty client list. Create the first client with a generated 32-hex Telemt secret:
+Create another client with a generated 32-hex Telemt secret:
 
 ```bash
 sudo ./add-client.sh phone

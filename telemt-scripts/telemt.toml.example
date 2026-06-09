@@ -41,5 +41,7 @@ tls_front_dir = "/var/lib/telemt/tlsfront"
 unknown_sni_action = "mask"
 
 [access.users]
+":INITIAL_CLIENT:" = ":INITIAL_SECRET:"
 
 [access.user_max_unique_ips]
+":INITIAL_CLIENT:" = :INITIAL_MAX_UNIQUE_IPS:

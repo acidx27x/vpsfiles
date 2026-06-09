@@ -159,10 +159,10 @@ upsert_toml_key() {
   fi
 }
 
-require_service_active() {
+restart_service() {
   local service="$1"
 
-  systemctl is-active --quiet "${service}" || die "${service} is not active; run install.sh first and check service logs"
+  systemctl restart "${service}" || die "failed to restart ${service}; check service logs"
 }
 
 fetch_client_api() {
@@ -253,7 +253,6 @@ main() {
 
   prompt max_unique_ips "Max simultaneous unique IPs for this client" "${max_unique_ips}"
   validate_positive_int "max unique IPs" "${max_unique_ips}"
-  require_service_active "${service}"
 
   secret="$(generate_secret)"
   [[ -n "${secret}" ]] || die "could not generate Telemt secret"
@@ -261,6 +260,7 @@ main() {
   info "Adding Telemt client: ${client_name}"
   upsert_toml_key "${config_file}" "access.users" "${client_name}" "\"${secret}\""
   upsert_toml_key "${config_file}" "access.user_max_unique_ips" "${client_name}" "${max_unique_ips}"
+  restart_service "${service}"
   write_client_artifacts "${client_name}" "${secret}" "${max_unique_ips}"
   info "Created Telemt links: ${client_dir}/telemt-${client_name}-links.txt"
 }
