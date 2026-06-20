@@ -17,6 +17,7 @@ TELEMT_WORK_DIR="/opt/telemt"
 TELEMT_DATA_DIR="/var/lib/telemt"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SERVER_TEMPLATE="${SCRIPT_DIR}/telemt.toml.example"
 CLIENTS_DIR="${SCRIPT_DIR}/clients"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
@@ -32,17 +33,17 @@ TELEMT_SERVICE="${TELEMT_SERVICE:-${TELEMT_SERVICE_DEFAULT}}"
 TELEMT_BIN="${TELEMT_BIN:-${TELEMT_BIN_DEFAULT}}"
 TELEMT_VERSION="${TELEMT_VERSION:-latest}"
 
+# shellcheck source=lib/core.sh
+. "${REPO_ROOT}/lib/core.sh"
+# shellcheck source=lib/install_common.sh
+. "${REPO_ROOT}/lib/install_common.sh"
+
 require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    echo "ERROR: run as root:"
-    echo "  sudo bash ${0}"
-    exit 1
-  fi
+  vps_require_root "sudo bash ${0}"
 }
 
 die() {
-  echo "ERROR: $*" >&2
-  exit 1
+  vps_die "$@"
 }
 
 require_files() {
@@ -65,62 +66,32 @@ require_files() {
 }
 
 require_supported_os() {
-  if ! command -v apt-get >/dev/null 2>&1; then
-    die "this installer currently supports Debian/Ubuntu systems with apt"
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    die "this installer expects systemd"
-  fi
+  vps_require_supported_apt_os
+  vps_require_systemd
 }
 
 prompt() {
-  local name="$1"
-  local label="$2"
-  local default="$3"
-  local value=""
-
-  read -r -p "${label} [${default}]: " value
-  printf -v "${name}" '%s' "${value:-${default}}"
+  vps_prompt "$@"
 }
 
 confirm() {
-  local message="$1"
-  local answer=""
-
-  read -r -p "${message} [y/N]: " answer
-  case "${answer}" in
-    y|Y|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
+  vps_confirm "$@"
 }
 
 validate_port() {
-  local port="$1"
-
-  [[ "${port}" =~ ^[0-9]+$ ]] || die "port must be a number: ${port}"
-  (( port >= 1 && port <= 65535 )) || die "port must be between 1 and 65535: ${port}"
+  vps_validate_port "$1"
 }
 
 validate_non_negative_int() {
-  local name="$1"
-  local value="$2"
-
-  [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a non-negative integer"
+  vps_validate_non_negative_int "$@"
 }
 
 validate_positive_int() {
-  local name="$1"
-  local value="$2"
-
-  [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a positive integer"
-  (( value >= 1 )) || die "${name} must be at least 1"
+  vps_validate_positive_int "$@"
 }
 
 validate_client_name() {
-  local client_name="$1"
-
-  [[ "${client_name}" =~ ^[A-Za-z0-9._-]+$ ]] || die "client name may only contain letters, numbers, dot, underscore, and dash"
-  [[ "${client_name}" != "." && "${client_name}" != ".." ]] || die "invalid client name"
+  vps_validate_client_name "$1"
 }
 
 validate_version() {
@@ -128,33 +99,15 @@ validate_version() {
 }
 
 detect_public_ip() {
-  local ip_addr=""
-
-  if command -v curl >/dev/null 2>&1; then
-    ip_addr="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
-    if [[ -z "${ip_addr}" ]]; then
-      ip_addr="$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-    fi
-  fi
-
-  echo "${ip_addr}"
+  vps_detect_public_ip
 }
 
 detect_public_ip6() {
-  local ip_addr=""
-
-  if command -v curl >/dev/null 2>&1; then
-    ip_addr="$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
-    if [[ -z "${ip_addr}" ]]; then
-      ip_addr="$(curl -6 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-    fi
-  fi
-
-  echo "${ip_addr}"
+  vps_detect_public_ip6
 }
 
 sed_escape() {
-  printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
+  vps_sed_escape "$1"
 }
 
 generate_secret() {
@@ -183,8 +136,7 @@ detect_libc() {
 }
 
 install_packages() {
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  vps_install_packages \
     ca-certificates \
     curl \
     gzip \
@@ -440,20 +392,12 @@ prepare_script_state() {
 }
 
 setup_firewall() {
-  ufw allow "${TELEMT_PORT}/tcp" >/dev/null || true
-
-  if ! ufw status | grep -q "Status: active"; then
-    if confirm "UFW is not active. Enable it now?"; then
-      ufw --force enable >/dev/null
-    else
-      echo "Skipped enabling UFW. The Telemt TCP port was still added to UFW rules."
-    fi
-  fi
+  vps_ufw_allow "${TELEMT_PORT}" "tcp"
+  vps_enable_ufw_if_needed "Skipped enabling UFW. The Telemt TCP port was still added to UFW rules."
 }
 
 start_telemt() {
-  systemctl enable "${TELEMT_SERVICE}" >/dev/null
-  systemctl restart "${TELEMT_SERVICE}"
+  vps_systemctl_enable_restart "${TELEMT_SERVICE}"
 }
 
 collect_settings() {

@@ -1,3 +1,0 @@
-[submodule "wireguard-scripts"]
-	path = wireguard-scripts
-	url = https://github.com/acidx27x/wireguard-scripts.git

@@ -12,6 +12,7 @@ XRAY_SERVICE_DEFAULT="xray"
 SYSCTL_FILE="/etc/sysctl.d/99-xray-bbr.conf"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SERVER_TEMPLATE="${SCRIPT_DIR}/config-server.example.json"
 CLIENTS_DIR="${SCRIPT_DIR}/clients"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
@@ -24,17 +25,17 @@ XRAY_SERVER_NAME="${XRAY_SERVER_NAME:-${XRAY_SERVER_NAME_DEFAULT}}"
 XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
 XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
 
+# shellcheck source=lib/core.sh
+. "${REPO_ROOT}/lib/core.sh"
+# shellcheck source=lib/install_common.sh
+. "${REPO_ROOT}/lib/install_common.sh"
+
 require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    echo "ERROR: run as root:"
-    echo "  sudo bash ${0}"
-    exit 1
-  fi
+  vps_require_root "sudo bash ${0}"
 }
 
 die() {
-  echo "ERROR: $*" >&2
-  exit 1
+  vps_die "$@"
 }
 
 require_files() {
@@ -57,71 +58,32 @@ require_files() {
 }
 
 require_supported_os() {
-  if ! command -v apt-get >/dev/null 2>&1; then
-    die "this installer currently supports Debian/Ubuntu systems with apt"
-  fi
-  if ! command -v systemctl >/dev/null 2>&1; then
-    die "this installer expects systemd"
-  fi
+  vps_require_supported_apt_os
+  vps_require_systemd
 }
 
 prompt() {
-  local name="$1"
-  local label="$2"
-  local default="$3"
-  local value=""
-
-  read -r -p "${label} [${default}]: " value
-  printf -v "${name}" '%s' "${value:-${default}}"
+  vps_prompt "$@"
 }
 
 confirm() {
-  local message="$1"
-  local answer=""
-
-  read -r -p "${message} [y/N]: " answer
-  case "${answer}" in
-    y|Y|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
+  vps_confirm "$@"
 }
 
 validate_port() {
-  local port="$1"
-
-  [[ "${port}" =~ ^[0-9]+$ ]] || die "port must be a number: ${port}"
-  (( port >= 1 && port <= 65535 )) || die "port must be between 1 and 65535: ${port}"
+  vps_validate_port "$1"
 }
 
 detect_public_ip() {
-  local ip_addr=""
-
-  if command -v curl >/dev/null 2>&1; then
-    ip_addr="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
-    if [[ -z "${ip_addr}" ]]; then
-      ip_addr="$(curl -4 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-    fi
-  fi
-
-  echo "${ip_addr}"
+  vps_detect_public_ip
 }
 
 detect_public_ip6() {
-  local ip_addr=""
-
-  if command -v curl >/dev/null 2>&1; then
-    ip_addr="$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
-    if [[ -z "${ip_addr}" ]]; then
-      ip_addr="$(curl -6 -fsS --max-time 5 https://ifconfig.me 2>/dev/null || true)"
-    fi
-  fi
-
-  echo "${ip_addr}"
+  vps_detect_public_ip6
 }
 
 install_packages() {
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  vps_install_packages \
     curl \
     jq \
     openssl \
@@ -303,20 +265,12 @@ prepare_script_state() {
 }
 
 setup_firewall() {
-  ufw allow "${XRAY_PORT}/tcp" >/dev/null || true
-
-  if ! ufw status | grep -q "Status: active"; then
-    if confirm "UFW is not active. Enable it now?"; then
-      ufw --force enable >/dev/null
-    else
-      echo "Skipped enabling UFW. The Xray TCP port was still added to UFW rules."
-    fi
-  fi
+  vps_ufw_allow "${XRAY_PORT}" "tcp"
+  vps_enable_ufw_if_needed "Skipped enabling UFW. The Xray TCP port was still added to UFW rules."
 }
 
 start_xray() {
-  systemctl enable "${XRAY_SERVICE}" >/dev/null
-  systemctl restart "${XRAY_SERVICE}"
+  vps_systemctl_enable_restart "${XRAY_SERVICE}"
 }
 
 collect_settings() {
