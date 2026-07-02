@@ -1,6 +1,6 @@
 # AmneziaWG VPS Installer and Client Manager
 
-Bash scripts to install an AmneziaWG VPN server on Debian/Ubuntu VPS, create client configs, generate QR codes for phones, and add or remove AmneziaWG peers.
+Bash scripts to install an AmneziaWG VPN server on Debian/Ubuntu VPS, create client configs, and add or remove AmneziaWG peers.
 
 These scripts are separate from `../wireguard-scripts`. The existing WireGuard scripts remain available and are not replaced by this AmneziaWG script set.
 
@@ -14,6 +14,14 @@ sudo ./install.sh
 ```
 
 The installer installs AmneziaWG packages, generates server keys, writes `/etc/amnezia/amneziawg/awg0.conf`, saves generated obfuscation parameters, enables IPv4 and IPv6 forwarding, opens the AmneziaWG UDP port with UFW, and starts `awg-quick@awg0`.
+
+## Update
+
+```bash
+sudo ./update.sh
+```
+
+This upgrades the AmneziaWG package without rerunning the installer or changing server configuration, obfuscation settings, keys, clients, endpoints, UFW, or sysctl state. If `awg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
 
 By default the tunnel is dual-stack:
 
@@ -32,13 +40,13 @@ For AmneziaWG 2.0, generated `H1`-`H4` values are non-overlapping ranges like `1
 
 ## Client Commands
 
-Create a new client with a preshared key, add it to the server config, try to add it to the live `awg0` interface, and write a QR code file:
+Create a new client with a preshared key, add it to the server config, try to add it to the live `awg0` interface, and write client files:
 
 ```bash
 sudo ./add-client.sh phone
 ```
 
-Create a client and also print the QR code and live AmneziaWG output:
+Create a client and also print live AmneziaWG output:
 
 ```bash
 sudo ./add-client.sh --verbose phone
@@ -116,7 +124,7 @@ To route only VPN subnet traffic, edit `awg0-client.example.conf` before creatin
 
 Generated clients include a preshared key. The client template includes `PresharedKey`, and `add-peer.sh` requires `clients/<name>/<name>.psk` before adding the peer to the server config or live interface. Existing clients without a `.psk` are not backfilled; recreate them with `add-client.sh`.
 
-The QR code is written to `clients/<name>/awg0-<name>-qrcode.txt`; use `--verbose` with `add-client.sh` to also print the QR code in the terminal.
+Generated client directories contain `awg0-<name>.conf`, `<name>.pub`, and `<name>.psk`. The private key is embedded in the generated client config and is not retained as a separate file.
 
 ## Notes
 

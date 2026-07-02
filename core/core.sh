@@ -158,17 +158,6 @@ vps_format_uri_host() {
   fi
 }
 
-vps_format_config_address() {
-  local endpoint="$1"
-
-  if [[ "${endpoint}" == \[*\] ]]; then
-    endpoint="${endpoint#[}"
-    endpoint="${endpoint%]}"
-  fi
-
-  printf '%s\n' "${endpoint}"
-}
-
 vps_url_encode() {
   jq -rn --arg value "$1" '$value | @uri'
 }

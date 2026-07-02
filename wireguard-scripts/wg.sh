@@ -294,6 +294,7 @@ wg_family_add_client_main() {
   client_conf="${client_dir}/${WG_FAMILY_CLIENT_PREFIX}-${client_name}.conf"
   sed "${WG_FAMILY_CLIENT_SED_ARGS[@]}" "${client_template}" > "${client_conf}"
   chmod 600 "${client_conf}"
+  rm -f "${client_dir}/${client_name}.priv"
 
   add_peer_args=()
   if [[ "${VERBOSE}" -eq 1 ]]; then
@@ -316,15 +317,6 @@ wg_family_add_client_main() {
   fi
 
   vps_info "Created config: ${client_conf}"
-  if command -v qrencode >/dev/null 2>&1; then
-    if [[ "${VERBOSE}" -eq 1 ]]; then
-      qrencode -t ansiutf8 < "${client_conf}" | tee "${client_dir}/${WG_FAMILY_CLIENT_PREFIX}-${client_name}-qrcode.txt"
-    else
-      qrencode -t ansiutf8 < "${client_conf}" > "${client_dir}/${WG_FAMILY_CLIENT_PREFIX}-${client_name}-qrcode.txt"
-    fi
-    chmod 600 "${client_dir}/${WG_FAMILY_CLIENT_PREFIX}-${client_name}-qrcode.txt"
-    vps_info "Created QR code text: ${client_dir}/${WG_FAMILY_CLIENT_PREFIX}-${client_name}-qrcode.txt"
-  fi
   vps_verbose "${WG_FAMILY_NAME} interface: ${iface}"
 }
 

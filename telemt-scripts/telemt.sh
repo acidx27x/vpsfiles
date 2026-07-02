@@ -4,10 +4,65 @@
 VPS_TELEMT_SH=1
 
 TELEMT_CLIENTS_DIR_DEFAULT="${SCRIPT_DIR}/clients"
-TELEMT_MAX_UNIQUE_IPS_DEFAULT="2"
 
-telemt_generate_secret() {
-  openssl rand -hex 16 | tr -d '\r\n'
+telemt_validate_version() {
+  local version="$1"
+
+  [[ "${version}" =~ ^[A-Za-z0-9._-]+$ ]] || vps_die "TELEMT_VERSION contains invalid characters"
+}
+
+telemt_download_file() {
+  local url="$1"
+  local output="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fL "${url}" -o "${output}"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "${output}" "${url}"
+  else
+    vps_die "curl or wget is required"
+  fi
+}
+
+telemt_detect_libc() {
+  if ldd --version 2>&1 | grep -qi musl; then
+    printf '%s\n' musl
+  else
+    printf '%s\n' gnu
+  fi
+}
+
+telemt_release_url() {
+  local version="$1"
+  local arch=""
+  local libc=""
+
+  telemt_validate_version "${version}"
+  arch="$(uname -m)"
+  libc="$(telemt_detect_libc)"
+  if [[ "${version}" == "latest" ]]; then
+    printf 'https://github.com/telemt/telemt/releases/latest/download/telemt-%s-linux-%s.tar.gz\n' "${arch}" "${libc}"
+  else
+    printf 'https://github.com/telemt/telemt/releases/download/%s/telemt-%s-linux-%s.tar.gz\n' "${version}" "${arch}" "${libc}"
+  fi
+}
+
+telemt_download_binary() {
+  local version="$1"
+  local output="$2"
+  local temp_dir=""
+  local archive=""
+  local url=""
+
+  temp_dir="$(mktemp -d)"
+  archive="${temp_dir}/telemt.tar.gz"
+  url="$(telemt_release_url "${version}")"
+  if ! telemt_download_file "${url}" "${archive}" || ! tar -xzf "${archive}" -C "${temp_dir}" || [[ ! -f "${temp_dir}/telemt" ]]; then
+    rm -rf -- "${temp_dir}"
+    vps_die "Telemt release archive is invalid or could not be downloaded"
+  fi
+  install -m 755 "${temp_dir}/telemt" "${output}"
+  rm -rf -- "${temp_dir}"
 }
 
 telemt_key_exists() {
@@ -190,9 +245,8 @@ telemt_write_client_artifacts() {
   local max_unique_ips="$3"
   local clients_dir="${CLIENTS_DIR:-${TELEMT_CLIENTS_DIR_DEFAULT}}"
   local client_dir="${clients_dir}/${client_name}"
-  local api_file="${client_dir}/telemt-${client_name}-api.json"
+  local api_file=""
   local links_file="${client_dir}/telemt-${client_name}-links.txt"
-  local first_link=""
 
   mkdir -p "${client_dir}"
   chmod 700 "${client_dir}"
@@ -201,6 +255,7 @@ telemt_write_client_artifacts() {
   printf '%s\n' "${max_unique_ips}" > "${client_dir}/${client_name}.max-unique-ips"
   chmod 600 "${client_dir}/${client_name}.secret" "${client_dir}/${client_name}.max-unique-ips"
 
+  api_file="$(mktemp --suffix=.json)"
   telemt_fetch_client_api "${client_name}" "${api_file}"
   jq -r --arg name "${client_name}" '
     .data[]? | select(.username == $name) |
@@ -209,94 +264,5 @@ telemt_write_client_artifacts() {
     (.links.classic[]? | "classic: \(.)")
   ' "${api_file}" > "${links_file}"
   chmod 600 "${links_file}"
-
-  first_link="$(jq -r --arg name "${client_name}" '.data[]? | select(.username == $name) | (.links.tls[0] // .links.secure[0] // .links.classic[0] // empty)' "${api_file}")"
-  if [[ -n "${first_link}" ]] && command -v qrencode >/dev/null 2>&1; then
-    printf '%s\n' "${first_link}" | qrencode -t ansiutf8 > "${client_dir}/telemt-${client_name}-qrcode.txt"
-    chmod 600 "${client_dir}/telemt-${client_name}-qrcode.txt"
-  fi
-}
-
-telemt_add_client_main() {
-  if [[ $# -ne 1 ]]; then
-    printf 'usage: add-client.sh <client_name>\n'
-    exit 1
-  fi
-
-  local client_name="$1"
-  local config_file=""
-  local service=""
-  local clients_dir="${CLIENTS_DIR:-${TELEMT_CLIENTS_DIR_DEFAULT}}"
-  local client_dir=""
-  local secret=""
-  local max_unique_ips="${TELEMT_CLIENT_MAX_UNIQUE_IPS:-${MAX_UNIQUE_IPS_DEFAULT:-${TELEMT_MAX_UNIQUE_IPS_DEFAULT}}}"
-
-  vps_require_root "sudo ./add-client.sh ..."
-  vps_validate_client_name "${client_name}"
-
-  vps_require_commands curl jq openssl systemctl
-
-  config_file="$(vps_read_file_or_default telemt-config-path.txt "/etc/telemt/telemt.toml")"
-  service="$(vps_read_file_or_default telemt-service.txt "telemt")"
-  client_dir="${clients_dir}/${client_name}"
-
-  [[ -f "${config_file}" ]] || vps_die "Telemt config is missing: ${config_file}"
-  [[ ! -e "${client_dir}" ]] || vps_die "client already exists: ${client_name}"
-  if telemt_key_exists "${config_file}" "access.users" "${client_name}"; then
-    vps_die "client already exists in Telemt config: ${client_name}"
-  fi
-
-  vps_prompt max_unique_ips "Max simultaneous unique IPs for this client" "${max_unique_ips}"
-  vps_validate_positive_int "max unique IPs" "${max_unique_ips}"
-
-  secret="$(telemt_generate_secret)"
-  [[ -n "${secret}" ]] || vps_die "could not generate Telemt secret"
-
-  vps_info "Adding Telemt client: ${client_name}"
-  telemt_upsert_key "${config_file}" "access.users" "${client_name}" "\"${secret}\""
-  telemt_upsert_key "${config_file}" "access.user_max_unique_ips" "${client_name}" "${max_unique_ips}"
-  vps_systemctl_restart "${service}"
-  telemt_write_client_artifacts "${client_name}" "${secret}" "${max_unique_ips}"
-  vps_info "Created Telemt links: ${client_dir}/telemt-${client_name}-links.txt"
-}
-
-telemt_remove_client_main() {
-  if [[ $# -ne 1 ]]; then
-    printf 'usage: remove-client.sh <client_name>\n'
-    exit 1
-  fi
-
-  local client_name="$1"
-  local config_file=""
-  local service=""
-  local clients_dir="${CLIENTS_DIR:-${TELEMT_CLIENTS_DIR_DEFAULT}}"
-  local client_dir=""
-  local exists_in_config=0
-  local user_count=0
-
-  vps_require_root "sudo ./remove-client.sh ..."
-  vps_validate_client_name "${client_name}"
-
-  config_file="$(vps_read_file_or_default telemt-config-path.txt "/etc/telemt/telemt.toml")"
-  service="$(vps_read_file_or_default telemt-service.txt "telemt")"
-  client_dir="${clients_dir}/${client_name}"
-
-  [[ -f "${config_file}" ]] || vps_die "Telemt config is missing: ${config_file}"
-  if telemt_key_exists "${config_file}" "access.users" "${client_name}"; then
-    exists_in_config=1
-  fi
-  if [[ "${exists_in_config}" -eq 0 && ! -d "${client_dir}" ]]; then
-    vps_die "client does not exist: ${client_name}"
-  fi
-  user_count="$(telemt_count_keys "${config_file}" "access.users")"
-  if [[ "${exists_in_config}" -eq 1 && "${user_count}" -le 1 ]]; then
-    vps_die "refusing to remove the last Telemt client; Telemt requires at least one configured user"
-  fi
-
-  vps_info "Removing Telemt client: ${client_name}"
-  telemt_remove_key "${config_file}" "access.users" "${client_name}"
-  telemt_remove_key "${config_file}" "access.user_max_unique_ips" "${client_name}"
-  vps_systemctl_restart "${service}"
-  vps_safe_remove_client_dir "${client_dir}" "${clients_dir}"
-  vps_info "Removed client files for: ${client_name}"
+  rm -f "${api_file}"
 }

@@ -45,3 +45,22 @@ teardown() {
   assert_file_contains "${config}" "[access.users]"
   assert_file_contains "${config}" '"main" = "secret"'
 }
+
+@test "telemt client output excludes raw API and QR files" {
+  CLIENTS_DIR="${TEST_TMPDIR}/clients"
+  telemt_fetch_client_api() {
+    local _client_name="$1"
+    local output_file="$2"
+    cat > "${output_file}" <<'EOF'
+{"data":[{"username":"phone","links":{"tls":["tm://phone"],"secure":[],"classic":[]}}]}
+EOF
+  }
+
+  telemt_write_client_artifacts "phone" "secret" 2
+
+  [ -f "${CLIENTS_DIR}/phone/phone.secret" ]
+  [ -f "${CLIENTS_DIR}/phone/phone.max-unique-ips" ]
+  [ -f "${CLIENTS_DIR}/phone/telemt-phone-links.txt" ]
+  [ ! -e "${CLIENTS_DIR}/phone/telemt-phone-api.json" ]
+  [ ! -e "${CLIENTS_DIR}/phone/telemt-phone-qrcode.txt" ]
+}

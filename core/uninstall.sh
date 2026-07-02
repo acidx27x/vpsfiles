@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-[[ -n "${VPS_UNINSTALL_COMMON_SH:-}" ]] && return 0
-VPS_UNINSTALL_COMMON_SH=1
+[[ -n "${VPS_UNINSTALL_SH:-}" ]] && return 0
+VPS_UNINSTALL_SH=1
 
 vps_uninstall_stop_quick_service() {
   local service="$1"

@@ -1,6 +1,6 @@
 # WireGuard VPS Installer and Client Manager
 
-Bash scripts to install a WireGuard VPN server on Debian/Ubuntu VPS, create client configs, generate QR codes for phones, and add or remove WireGuard peers.
+Bash scripts to install a WireGuard VPN server on Debian/Ubuntu VPS, create client configs, and add or remove WireGuard peers.
 
 ## Install
 
@@ -13,6 +13,14 @@ sudo ./install.sh
 
 The installer installs WireGuard packages, generates server keys, writes `/etc/wireguard/wg0.conf`, enables IPv4 and IPv6 forwarding, opens the WireGuard UDP port with UFW, and starts `wg-quick@wg0`.
 
+## Update
+
+```bash
+sudo ./update.sh
+```
+
+This upgrades WireGuard packages without rerunning the installer or changing server configuration, keys, clients, endpoints, UFW, or sysctl state. If `wg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
+
 By default the tunnel is dual-stack:
 
 ```text
@@ -24,7 +32,7 @@ IPv6 server: fd42:42:42::1
 
 ## Client Commands
 
-Create a new client with a preshared key, add it to the server config, try to add it to the live `wg0` interface, and write a QR code file:
+Create a new client with a preshared key, add it to the server config, try to add it to the live `wg0` interface, and write client files:
 
 ```bash
 sudo ./add-client.sh phone
@@ -111,7 +119,7 @@ AllowedIPs = 0.0.0.0/0, ::/0
 
 To route only VPN subnet traffic, edit `wg0-client.example.conf` before creating clients.
 
-Generated clients include a WireGuard preshared key. The QR code is written to `clients/<name>/wg0-<name>-qrcode.txt`; use `--verbose` with `add-client.sh` to also print the QR code in the terminal.
+Generated client directories contain `wg0-<name>.conf`, `<name>.pub`, and `<name>.psk`. The private key is embedded in the generated client config and is not retained as a separate file.
 
 ## Notes
 

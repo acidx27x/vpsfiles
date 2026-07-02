@@ -63,3 +63,15 @@ teardown() {
   run jq -e '.inbounds[0].streamSettings.realitySettings.shortIds[]? | select(. == "sid-1")' "${XRAY_CONFIG}"
   [ "$status" -ne 0 ]
 }
+
+@test "xray client output keeps URI and removal metadata only" {
+  CLIENTS_DIR="${TEST_TMPDIR}/clients"
+
+  xray_write_client_artifacts "phone" "uuid-1" "sid-1" "198.51.100.10" 443 "www.example.com" "public-key"
+
+  [ -f "${CLIENTS_DIR}/phone/phone.uuid" ]
+  [ -f "${CLIENTS_DIR}/phone/phone.short-id" ]
+  [ -f "${CLIENTS_DIR}/phone/vless-phone.txt" ]
+  [ ! -e "${CLIENTS_DIR}/phone/xray-client-phone.json" ]
+  [ ! -e "${CLIENTS_DIR}/phone/vless-phone-qrcode.txt" ]
+}

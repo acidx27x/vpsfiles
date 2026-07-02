@@ -12,8 +12,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLIENTS_DIR="${SCRIPT_DIR}/clients"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
 
 main() {
   local config_file=""
@@ -27,6 +27,9 @@ main() {
   config_file="$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-config-path.txt" "${TELEMT_CONFIG_DEFAULT}")"
   service="$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-service.txt" "${TELEMT_SERVICE_DEFAULT}")"
   bin_path="$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-bin-path.txt" "${TELEMT_BIN_DEFAULT}")"
+  [[ "${config_file}" == /* ]] || vps_die "saved Telemt config path is unsafe: ${config_file}"
+  [[ "${bin_path}" == /* ]] || vps_die "saved Telemt binary path is unsafe: ${bin_path}"
+  [[ "${service}" =~ ^[A-Za-z0-9_.@-]+$ ]] || vps_die "saved Telemt service name is invalid"
   service_file="/etc/systemd/system/${service}.service"
   override_dir="/etc/systemd/system/${service}.service.d"
 

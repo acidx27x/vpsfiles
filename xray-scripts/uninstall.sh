@@ -10,10 +10,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLIENTS_DIR="${SCRIPT_DIR}/clients"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/uninstall_common.sh
-. "${REPO_ROOT}/lib/uninstall_common.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=core/uninstall.sh
+. "${REPO_ROOT}/core/uninstall.sh"
 
 main() {
   local config_file=""
@@ -23,6 +23,8 @@ main() {
 
   config_file="$(vps_read_file_or_default "${SCRIPT_DIR}/xray-config-path.txt" "${XRAY_CONFIG_DEFAULT}")"
   service="$(vps_read_file_or_default "${SCRIPT_DIR}/xray-service.txt" "${XRAY_SERVICE_DEFAULT}")"
+  [[ "${config_file}" == /* ]] || vps_die "saved Xray config path is unsafe: ${config_file}"
+  [[ "${service}" =~ ^[A-Za-z0-9_.@-]+$ ]] || vps_die "saved Xray service name is invalid"
 
   vps_uninstall_print_plan "Xray" \
     "  Systemd service:   ${service}" \

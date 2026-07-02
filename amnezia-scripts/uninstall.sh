@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AWG_IF_DEFAULT="awg0"
-AWG_DIR="/etc/amnezia/amneziawg"
-SYSCTL_FILE="/etc/sysctl.d/99-amneziawg.conf"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CLIENTS_DIR="${SCRIPT_DIR}/clients"
+# shellcheck source=amnezia-scripts/common.sh
+. "${SCRIPT_DIR}/common.sh"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 AWG_IF="${AWG_IF:-${AWG_IF_DEFAULT}}"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/uninstall_common.sh
-. "${REPO_ROOT}/lib/uninstall_common.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=core/uninstall.sh
+. "${REPO_ROOT}/core/uninstall.sh"
 
 main() {
   vps_require_root "sudo bash ${0}"
+  AWG_IF="$(vps_read_file_or_default "${SCRIPT_DIR}/server-interface.txt" "${AWG_IF}")"
+  [[ "${AWG_IF}" =~ ^[A-Za-z0-9_.-]+$ ]] || vps_die "saved AmneziaWG interface is invalid"
 
   vps_uninstall_print_plan "AmneziaWG" \
     "  Interface service: awg-quick@${AWG_IF}" \

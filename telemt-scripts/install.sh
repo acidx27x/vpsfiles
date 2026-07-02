@@ -33,10 +33,12 @@ TELEMT_SERVICE="${TELEMT_SERVICE:-${TELEMT_SERVICE_DEFAULT}}"
 TELEMT_BIN="${TELEMT_BIN:-${TELEMT_BIN_DEFAULT}}"
 TELEMT_VERSION="${TELEMT_VERSION:-latest}"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/install_common.sh
-. "${REPO_ROOT}/lib/install_common.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=core/install.sh
+. "${REPO_ROOT}/core/install.sh"
+# shellcheck source=telemt-scripts/telemt.sh
+. "${SCRIPT_DIR}/telemt.sh"
 
 require_root() {
   vps_require_root "sudo bash ${0}"
@@ -53,6 +55,7 @@ require_files() {
     "${SERVER_TEMPLATE}" \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh"; do
     if [[ ! -f "${file}" ]]; then
       echo "ERROR: required file is missing: ${file}"
@@ -94,10 +97,6 @@ validate_client_name() {
   vps_validate_client_name "$1"
 }
 
-validate_version() {
-  [[ "${TELEMT_VERSION}" =~ ^[A-Za-z0-9._-]+$ ]] || die "TELEMT_VERSION contains invalid characters"
-}
-
 detect_public_ip() {
   vps_detect_public_ip
 }
@@ -114,27 +113,6 @@ generate_secret() {
   openssl rand -hex 16 | tr -d '\r\n'
 }
 
-download_file() {
-  local url="$1"
-  local output="$2"
-
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL "${url}" -o "${output}"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "${output}" "${url}"
-  else
-    die "curl or wget is required"
-  fi
-}
-
-detect_libc() {
-  if ldd --version 2>&1 | grep -qi musl; then
-    echo "musl"
-  else
-    echo "gnu"
-  fi
-}
-
 install_packages() {
   vps_install_packages \
     ca-certificates \
@@ -142,34 +120,16 @@ install_packages() {
     gzip \
     jq \
     openssl \
-    qrencode \
     tar \
     ufw \
     wget
 }
 
 install_telemt() {
-  local arch=""
-  local libc=""
-  local archive=""
   local temp_dir=""
-  local url=""
 
-  validate_version
-  arch="$(uname -m)"
-  libc="$(detect_libc)"
   temp_dir="$(mktemp -d)"
-  archive="${temp_dir}/telemt.tar.gz"
-
-  if [[ "${TELEMT_VERSION}" == "latest" ]]; then
-    url="https://github.com/telemt/telemt/releases/latest/download/telemt-${arch}-linux-${libc}.tar.gz"
-  else
-    url="https://github.com/telemt/telemt/releases/download/${TELEMT_VERSION}/telemt-${arch}-linux-${libc}.tar.gz"
-  fi
-
-  download_file "${url}" "${archive}"
-  tar -xzf "${archive}" -C "${temp_dir}"
-  [[ -f "${temp_dir}/telemt" ]] || die "telemt binary is missing from release archive"
+  telemt_download_binary "${TELEMT_VERSION}" "${temp_dir}/telemt"
 
   install -d -m 755 "$(dirname "${TELEMT_BIN}")"
   install -m 755 "${temp_dir}/telemt" "${TELEMT_BIN}"
@@ -282,59 +242,11 @@ render_server_config() {
   rm -f "${tmp_file}"
 }
 
-fetch_client_api() {
-  local client_name="$1"
-  local output_file="$2"
-  local api_url="http://127.0.0.1:9091/v1/users"
-  local attempt=0
-  local tmp_file=""
-
-  tmp_file="$(mktemp)"
-  while (( attempt < 10 )); do
-    if curl -fsS "${api_url}" > "${tmp_file}" 2>/dev/null \
-      && jq -e --arg name "${client_name}" '.data[]? | select(.username == $name)' "${tmp_file}" >/dev/null; then
-      install -m 600 "${tmp_file}" "${output_file}"
-      rm -f "${tmp_file}"
-      return 0
-    fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-
-  rm -f "${tmp_file}"
-  die "could not fetch generated Telemt links for ${client_name} from ${api_url}"
-}
-
 write_initial_client_artifacts() {
-  local client_name="${TELEMT_INITIAL_CLIENT}"
-  local secret="${TELEMT_INITIAL_SECRET}"
-  local max_unique_ips="${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
-  local client_dir="${CLIENTS_DIR}/${client_name}"
-  local api_file="${client_dir}/telemt-${client_name}-api.json"
-  local links_file="${client_dir}/telemt-${client_name}-links.txt"
-  local first_link=""
-
-  mkdir -p "${client_dir}"
-  chmod 700 "${client_dir}"
-
-  printf '%s\n' "${secret}" > "${client_dir}/${client_name}.secret"
-  printf '%s\n' "${max_unique_ips}" > "${client_dir}/${client_name}.max-unique-ips"
-  chmod 600 "${client_dir}/${client_name}.secret" "${client_dir}/${client_name}.max-unique-ips"
-
-  fetch_client_api "${client_name}" "${api_file}"
-  jq -r --arg name "${client_name}" '
-    .data[]? | select(.username == $name) |
-    (.links.tls[]? | "tls: \(.)"),
-    (.links.secure[]? | "secure: \(.)"),
-    (.links.classic[]? | "classic: \(.)")
-  ' "${api_file}" > "${links_file}"
-  chmod 600 "${links_file}"
-
-  first_link="$(jq -r --arg name "${client_name}" '.data[]? | select(.username == $name) | (.links.tls[0] // .links.secure[0] // .links.classic[0] // empty)' "${api_file}")"
-  if [[ -n "${first_link}" ]] && command -v qrencode >/dev/null 2>&1; then
-    printf '%s\n' "${first_link}" | qrencode -t ansiutf8 > "${client_dir}/telemt-${client_name}-qrcode.txt"
-    chmod 600 "${client_dir}/telemt-${client_name}-qrcode.txt"
-  fi
+  telemt_write_client_artifacts \
+    "${TELEMT_INITIAL_CLIENT}" \
+    "${TELEMT_INITIAL_SECRET}" \
+    "${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
 }
 
 install_systemd_service() {
@@ -388,6 +300,7 @@ prepare_script_state() {
   chmod +x \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 }
 

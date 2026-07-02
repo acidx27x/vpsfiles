@@ -2,22 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=amnezia-scripts/common.sh
+. "${SCRIPT_DIR}/common.sh"
 cd "${SCRIPT_DIR}"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/wg_family.sh
-. "${REPO_ROOT}/lib/wg_family.sh"
-
-WG_FAMILY_NAME="AmneziaWG"
-WG_FAMILY_TOOL="awg"
-WG_FAMILY_QUICK="awg-quick"
-WG_FAMILY_DIR="/etc/amnezia/amneziawg"
-WG_FAMILY_DEFAULT_IF="awg0"
-WG_FAMILY_CLIENT_PREFIX="awg0"
-WG_FAMILY_DEFAULT_PORT="52820"
-WG_FAMILY_DEFAULT_NET="10.9.0.0/24"
-WG_FAMILY_DEFAULT_NET6="fd52:52:52::/64"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=wireguard-scripts/wg.sh
+. "${REPO_ROOT}/wireguard-scripts/wg.sh"
 
 wg_family_remove_client_main "$@"

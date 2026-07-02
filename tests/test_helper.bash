@@ -3,26 +3,34 @@
 REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
 
 load_core() {
-  # shellcheck source=lib/core.sh
-  . "${REPO_ROOT}/lib/core.sh"
+  # shellcheck source=core/core.sh
+  . "${REPO_ROOT}/core/core.sh"
+}
+
+load_update() {
+  load_core
+  # shellcheck source=core/install.sh
+  . "${REPO_ROOT}/core/install.sh"
+  # shellcheck source=core/update.sh
+  . "${REPO_ROOT}/core/update.sh"
 }
 
 load_wg_family() {
   load_core
-  # shellcheck source=lib/wg_family.sh
-  . "${REPO_ROOT}/lib/wg_family.sh"
+  # shellcheck source=wireguard-scripts/wg.sh
+  . "${REPO_ROOT}/wireguard-scripts/wg.sh"
 }
 
 load_telemt() {
   load_core
-  # shellcheck source=lib/telemt.sh
-  . "${REPO_ROOT}/lib/telemt.sh"
+  # shellcheck source=telemt-scripts/telemt.sh
+  . "${REPO_ROOT}/telemt-scripts/telemt.sh"
 }
 
 load_xray() {
   load_core
-  # shellcheck source=lib/xray.sh
-  . "${REPO_ROOT}/lib/xray.sh"
+  # shellcheck source=xray-scripts/xray.sh
+  . "${REPO_ROOT}/xray-scripts/xray.sh"
 }
 
 make_temp_dir() {

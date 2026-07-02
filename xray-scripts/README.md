@@ -15,6 +15,14 @@ sudo ./install.sh
 
 The installer uses the official XTLS Xray install script, writes `/usr/local/etc/xray/config.json`, enables BBR-related sysctl settings, opens the Xray TCP port with UFW, validates the generated config, and starts `xray`.
 
+## Update
+
+```bash
+sudo ./update.sh
+```
+
+This uses the official Xray updater without rerunning this bundle's installer or changing server configuration, REALITY identity, clients, endpoints, UFW, or sysctl state. It validates the current config with the updated binary. If the service was active, the updater restarts and verifies it, restoring the prior binary if validation or startup fails.
+
 The installed server config starts with an empty VLESS client list. It still contains one generated unused REALITY server shortId because Xray requires `realitySettings.shortIds` to be a non-empty list.
 
 Defaults:
@@ -25,15 +33,15 @@ Protocol:       VLESS
 Flow:           xtls-rprx-vision
 Transport:      raw
 Security:       reality
-Target:         www.microsoft.com:443
-Server name:    www.microsoft.com
-Fingerprint:    chrome
+Target:         www.firefox.com:443
+Server name:    www.firefox.com
+Fingerprint:    firefox
 Initial clients: none
 ```
 
 ## Client Commands
 
-After install, the server starts with an empty client list. Create the first client with a unique UUID and REALITY shortId, add it to the server config, write a VLESS share URI, write an Xray client JSON config, and write a QR code text file when `qrencode` is installed:
+After install, the server starts with an empty client list. Create the first client with a unique UUID and REALITY shortId, add it to the server config, and write a VLESS share URI:
 
 ```bash
 sudo ./add-client.sh phone
@@ -67,11 +75,9 @@ Generated client files are written to `clients/<name>/`:
 <name>.uuid
 <name>.short-id
 vless-<name>.txt
-xray-client-<name>.json
-vless-<name>-qrcode.txt
 ```
 
-Import `vless-<name>.txt` into a VLESS-capable client, or use `xray-client-<name>.json` with Xray on a client machine.
+Import `vless-<name>.txt` into a VLESS-capable client.
 
 The generated share link uses:
 
@@ -80,7 +86,7 @@ type=raw
 security=reality
 encryption=none
 flow=xtls-rprx-vision
-fp=chrome
+fp=firefox
 ```
 
 ## Notes

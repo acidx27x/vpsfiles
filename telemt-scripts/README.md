@@ -15,6 +15,15 @@ sudo ./install.sh
 
 The installer downloads the official Telemt release binary, writes `/etc/telemt/telemt.toml`, creates a `telemt` systemd service, opens the Telemt TCP port with UFW, and starts `telemt`.
 
+## Update
+
+```bash
+sudo ./update.sh
+sudo TELEMT_VERSION=v1.2.3 ./update.sh
+```
+
+The updater replaces only the Telemt binary and its required packages. It preserves the TOML configuration, TLS-front data, clients, endpoints, systemd unit, UFW, and sysctl state. If the service was active, it is restarted and verified; failed startup restores the prior binary.
+
 Defaults:
 
 ```text
@@ -63,9 +72,7 @@ Generated client files are written to `clients/<name>/`:
 ```text
 <name>.secret
 <name>.max-unique-ips
-telemt-<name>-api.json
 telemt-<name>-links.txt
-telemt-<name>-qrcode.txt
 ```
 
 Import a link from `telemt-<name>-links.txt` into Telegram. The links are fetched from Telemt's local API at `http://127.0.0.1:9091/v1/users`; the scripts do not hand-build Telemt links.

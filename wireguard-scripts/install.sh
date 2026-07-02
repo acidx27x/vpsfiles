@@ -4,20 +4,11 @@ set -euo pipefail
 # Full WireGuard installer for this script bundle.
 # Run from vpsfiles/wireguard-scripts, then add clients with ./add-client.sh.
 
-WG_IF_DEFAULT="wg0"
-WG_PORT_DEFAULT="51820"
-WG_NET_DEFAULT="10.8.0.0/24"
-WG_NET6_DEFAULT="fd42:42:42::/64"
-WG_SERVER_IP_DEFAULT="10.8.0.1"
-WG_SERVER_IP6_DEFAULT="fd42:42:42::1"
-WG_DIR="/etc/wireguard"
-SYSCTL_FILE="/etc/sysctl.d/99-wireguard.conf"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=wireguard-scripts/common.sh
+. "${SCRIPT_DIR}/common.sh"
 SERVER_TEMPLATE="${SCRIPT_DIR}/wg0-server.example.conf"
 CLIENT_TEMPLATE="${SCRIPT_DIR}/wg0-client.example.conf"
-CLIENTS_DIR="${SCRIPT_DIR}/clients"
 LAST_IP_FILE="${SCRIPT_DIR}/last-ip.txt"
 LAST_IP6_FILE="${SCRIPT_DIR}/last-ip6.txt"
 ENDPOINT_FILE="${SCRIPT_DIR}/server-endpoint.txt"
@@ -36,10 +27,10 @@ BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 WG_PREFIX="24"
 WG_PREFIX6="64"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/install_common.sh
-. "${REPO_ROOT}/lib/install_common.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=core/install.sh
+. "${REPO_ROOT}/core/install.sh"
 
 require_root() {
   vps_require_root "sudo bash ${0}"
@@ -55,6 +46,7 @@ require_files() {
     "${SCRIPT_DIR}/add-peer.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
     "${SCRIPT_DIR}/remove-peer.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh"; do
     if [[ ! -f "${file}" ]]; then
       echo "ERROR: required file is missing: ${file}"
@@ -96,7 +88,6 @@ install_packages() {
     curl \
     iproute2 \
     iptables \
-    qrencode \
     ufw \
     wireguard \
     wireguard-tools
@@ -240,6 +231,7 @@ prepare_script_state() {
     "${SCRIPT_DIR}/add-peer.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
     "${SCRIPT_DIR}/remove-peer.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 }
 
@@ -291,7 +283,7 @@ print_summary() {
   echo "Add clients with:"
   echo "  cd ${SCRIPT_DIR}"
   echo "  sudo ./add-client.sh phone             # create and add client"
-  echo "  sudo ./add-client.sh --verbose phone   # also print status and QR output"
+  echo "  sudo ./add-client.sh --verbose phone   # also print live interface output"
   echo "  sudo ./add-client.sh --ipv6-endpoint phone # create client using IPv6 endpoint"
   echo "  sudo ./add-peer.sh phone               # add an existing client to ${WG_IF}.conf"
   echo "  sudo ./add-peer.sh --live-only phone   # add an existing client to live ${WG_IF} only"

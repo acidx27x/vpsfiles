@@ -25,10 +25,12 @@ XRAY_SERVER_NAME="${XRAY_SERVER_NAME:-${XRAY_SERVER_NAME_DEFAULT}}"
 XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
 XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
 
-# shellcheck source=lib/core.sh
-. "${REPO_ROOT}/lib/core.sh"
-# shellcheck source=lib/install_common.sh
-. "${REPO_ROOT}/lib/install_common.sh"
+# shellcheck source=core/core.sh
+. "${REPO_ROOT}/core/core.sh"
+# shellcheck source=core/install.sh
+. "${REPO_ROOT}/core/install.sh"
+# shellcheck source=xray-scripts/xray.sh
+. "${SCRIPT_DIR}/xray.sh"
 
 require_root() {
   vps_require_root "sudo bash ${0}"
@@ -45,6 +47,7 @@ require_files() {
     "${SERVER_TEMPLATE}" \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh"; do
     if [[ ! -f "${file}" ]]; then
       echo "ERROR: required file is missing: ${file}"
@@ -87,13 +90,12 @@ install_packages() {
     curl \
     jq \
     openssl \
-    qrencode \
     ufw
 }
 
 install_xray() {
-  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-  command -v xray >/dev/null 2>&1 || die "xray is missing after installation"
+  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  vps_require_commands xray
 }
 
 backup_existing_configs() {
@@ -189,36 +191,6 @@ generate_short_id() {
   openssl rand -hex 8
 }
 
-xray_service_user() {
-  local service="$1"
-  local user=""
-
-  user="$(systemctl cat "${service}" 2>/dev/null | awk -F= '
-    $1 ~ /^[[:space:]]*User[[:space:]]*$/ {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
-      user = $2
-    }
-    END { print user }
-  ')"
-  printf '%s\n' "${user:-root}"
-}
-
-install_xray_config() {
-  local source_file="$1"
-  local dest_file="$2"
-  local service="$3"
-  local service_user=""
-  local service_group=""
-
-  service_user="$(xray_service_user "${service}")"
-  if id "${service_user}" >/dev/null 2>&1; then
-    service_group="$(id -gn "${service_user}")"
-    install -o "${service_user}" -g "${service_group}" -m 600 "${source_file}" "${dest_file}"
-  else
-    install -m 600 "${source_file}" "${dest_file}"
-  fi
-}
-
 render_server_config() {
   local tmp_file=""
 
@@ -239,7 +211,7 @@ render_server_config() {
 
   xray run -test -config "${tmp_file}" >/dev/null
   install -d -m 755 "$(dirname "${XRAY_CONFIG}")"
-  install_xray_config "${tmp_file}" "${XRAY_CONFIG}" "${XRAY_SERVICE}"
+  xray_install_config "${tmp_file}" "${XRAY_CONFIG}" "${XRAY_SERVICE}"
   rm -f "${tmp_file}"
 }
 
@@ -261,6 +233,7 @@ prepare_script_state() {
   chmod +x \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 }
 
