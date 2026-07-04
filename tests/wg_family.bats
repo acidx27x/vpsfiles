@@ -25,8 +25,13 @@ setup_wg_family_env() {
   export WG_FAMILY_DEFAULT_PORT="51820"
   export WG_FAMILY_DEFAULT_NET="10.8.0.0/24"
   export WG_FAMILY_DEFAULT_NET6="fd42:42:42::/64"
+  export CLIENTS_DIR="${bundle_dir}/clients"
   # shellcheck disable=SC2317
   vps_require_root() { :; }
+}
+
+setup_wg_hosts_file() {
+  export WG_FAMILY_HOSTS_FILE="$1"
 }
 
 setup_wg_peer_fixture() {
@@ -108,6 +113,42 @@ EOF
   [ "$status" -eq 0 ]
   assert_file_not_contains "${server_config}" "PublicKey = pub-a"
   assert_file_contains "${server_config}" "[Interface]"
+}
+
+@test "hosts entry add is idempotent" {
+  local hosts_file="${TEST_TMPDIR}/hosts"
+
+  printf '127.0.0.1 localhost\n10.8.0.2 phone alias\n' > "${hosts_file}"
+  setup_wg_hosts_file "${hosts_file}"
+
+  run wg_family_add_hosts_entry "10.8.0.2" "phone"
+  [ "$status" -eq 0 ]
+  run wg_family_add_hosts_entry "10.8.0.2" "phone"
+  [ "$status" -eq 0 ]
+
+  [ "$(awk '$0 == "10.8.0.2 phone" { count++ } END { print count + 0 }' "${hosts_file}")" -eq 1 ]
+  assert_file_contains "${hosts_file}" "10.8.0.2 phone alias"
+}
+
+@test "hosts entry removal deletes only exact generated row" {
+  local hosts_file="${TEST_TMPDIR}/hosts"
+
+  cat > "${hosts_file}" <<'EOF'
+127.0.0.1 localhost
+10.8.0.2 phone
+10.8.0.2 tablet
+10.8.0.3 phone
+10.8.0.2 phone alias
+EOF
+  setup_wg_hosts_file "${hosts_file}"
+
+  run wg_family_remove_hosts_entry "10.8.0.2" "phone"
+  [ "$status" -eq 0 ]
+
+  [ "$(awk '$0 == "10.8.0.2 phone" { count++ } END { print count + 0 }' "${hosts_file}")" -eq 0 ]
+  assert_file_contains "${hosts_file}" "10.8.0.2 tablet"
+  assert_file_contains "${hosts_file}" "10.8.0.3 phone"
+  assert_file_contains "${hosts_file}" "10.8.0.2 phone alias"
 }
 
 @test "default add-peer updates server config and live interface" {
@@ -303,9 +344,15 @@ EOF
   local bundle_dir="${TEST_TMPDIR}/bundle"
   local server_dir="${TEST_TMPDIR}/server"
   local remove_peer_log="${TEST_TMPDIR}/remove-peer-calls.log"
+  local hosts_file="${TEST_TMPDIR}/hosts"
 
   mkdir -p "${bundle_dir}/clients/phone" "${server_dir}"
   printf 'client-public\n' > "${bundle_dir}/clients/phone/phone.pub"
+  cat > "${bundle_dir}/clients/phone/wg0-phone.conf" <<'EOF'
+[Interface]
+Address = 10.8.0.2/32, fd42:42:42::2/128
+EOF
+  printf '10.8.0.2 phone\n10.8.0.3 other\n' > "${hosts_file}"
   cat > "${bundle_dir}/remove-peer.sh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${REMOVE_PEER_LOG}"
@@ -317,6 +364,7 @@ EOF
   chmod +x "${bundle_dir}/remove-peer.sh"
 
   export REMOVE_PEER_LOG="${remove_peer_log}"
+  setup_wg_hosts_file "${hosts_file}"
   setup_wg_family_env "${bundle_dir}" "${server_dir}"
 
   pushd "${bundle_dir}" >/dev/null
@@ -327,4 +375,47 @@ EOF
   [ ! -d "${bundle_dir}/clients/phone" ]
   [ "$(sed -n '1p' "${remove_peer_log}")" = "--config-only phone" ]
   [ "$(sed -n '2p' "${remove_peer_log}")" = "--live-only phone" ]
+  [ "$(awk '$0 == "10.8.0.2 phone" { count++ } END { print count + 0 }' "${hosts_file}")" -eq 0 ]
+  assert_file_contains "${hosts_file}" "10.8.0.3 other"
+}
+
+@test "generated hosts cleanup removes exact entries for existing client configs" {
+  local bundle_dir="${TEST_TMPDIR}/bundle"
+  local server_dir="${TEST_TMPDIR}/server"
+  local hosts_file="${TEST_TMPDIR}/hosts"
+
+  mkdir -p "${bundle_dir}/clients/phone" "${bundle_dir}/clients/laptop" "${bundle_dir}/clients/broken" "${server_dir}"
+  cat > "${bundle_dir}/clients/phone/wg0-phone.conf" <<'EOF'
+[Interface]
+Address = 10.8.0.2/32, fd42:42:42::2/128
+EOF
+  cat > "${bundle_dir}/clients/laptop/wg0-laptop.conf" <<'EOF'
+[Interface]
+Address = 10.8.0.3/32
+EOF
+  cat > "${bundle_dir}/clients/broken/wg0-broken.conf" <<'EOF'
+[Interface]
+PrivateKey = missing-address
+EOF
+  cat > "${hosts_file}" <<'EOF'
+127.0.0.1 localhost
+10.8.0.2 phone
+10.8.0.3 laptop
+10.8.0.4 phone
+10.8.0.2 phone alias
+10.8.0.5 broken
+EOF
+
+  setup_wg_hosts_file "${hosts_file}"
+  setup_wg_family_env "${bundle_dir}" "${server_dir}"
+
+  run wg_family_remove_generated_hosts_entries
+  [ "$status" -eq 0 ]
+
+  [ "$(awk '$0 == "10.8.0.2 phone" { count++ } END { print count + 0 }' "${hosts_file}")" -eq 0 ]
+  [ "$(awk '$0 == "10.8.0.3 laptop" { count++ } END { print count + 0 }' "${hosts_file}")" -eq 0 ]
+  assert_file_contains "${hosts_file}" "127.0.0.1 localhost"
+  assert_file_contains "${hosts_file}" "10.8.0.4 phone"
+  assert_file_contains "${hosts_file}" "10.8.0.2 phone alias"
+  assert_file_contains "${hosts_file}" "10.8.0.5 broken"
 }

@@ -170,6 +170,55 @@ wg_family_add_protocol_sed_args() {
   fi
 }
 
+wg_family_hosts_file() {
+  printf '%s\n' "${WG_FAMILY_HOSTS_FILE:-/etc/hosts}"
+}
+
+wg_family_add_hosts_entry() {
+  local ip="$1"
+  local client_name="$2"
+  local hosts_file=""
+
+  hosts_file="$(wg_family_hosts_file)"
+  if ! awk -v ip="${ip}" -v name="${client_name}" '$1 == ip && $2 == name && NF == 2 { found = 1 } END { exit !found }' "${hosts_file}" 2>/dev/null; then
+    printf '%s %s\n' "${ip}" "${client_name}" >> "${hosts_file}"
+  fi
+}
+
+wg_family_remove_hosts_entry() {
+  local ip="$1"
+  local client_name="$2"
+  local hosts_file=""
+  local tmp_file=""
+
+  hosts_file="$(wg_family_hosts_file)"
+  [[ -f "${hosts_file}" ]] || return 0
+
+  tmp_file="$(mktemp)"
+  awk -v ip="${ip}" -v name="${client_name}" '$1 == ip && $2 == name && NF == 2 { next } { print }' "${hosts_file}" > "${tmp_file}"
+  install -m 644 "${tmp_file}" "${hosts_file}"
+  rm -f "${tmp_file}"
+}
+
+wg_family_remove_generated_hosts_entries() {
+  local clients_dir="${CLIENTS_DIR:-clients}"
+  local client_conf=""
+  local client_dir=""
+  local client_name=""
+  local ip=""
+
+  [[ -d "${clients_dir}" ]] || return 0
+
+  while IFS= read -r client_conf; do
+    client_dir="$(dirname "${client_conf}")"
+    client_name="$(basename "${client_dir}")"
+    ip="$(wg_family_client_ip "${client_conf}")"
+    if [[ -n "${ip}" ]]; then
+      wg_family_remove_hosts_entry "${ip}" "${client_name}" || true
+    fi
+  done < <(find "${clients_dir}" -mindepth 2 -maxdepth 2 -name "${WG_FAMILY_CLIENT_PREFIX}-*.conf" -type f 2>/dev/null)
+}
+
 wg_family_add_client_main() {
   local endpoint_source="ipv4"
   VERBOSE=0
@@ -314,9 +363,7 @@ wg_family_add_client_main() {
   fi
 
   vps_info "Adding client to hosts file"
-  if ! awk -v ip="${ip}" -v name="${client_name}" '$1 == ip && $2 == name { found = 1 } END { exit !found }' /etc/hosts 2>/dev/null; then
-    printf '%s %s\n' "${ip}" "${client_name}" >> /etc/hosts
-  fi
+  wg_family_add_hosts_entry "${ip}" "${client_name}"
 
   vps_info "Created config: ${client_conf}"
   vps_verbose "${WG_FAMILY_NAME} interface: ${iface}"
@@ -544,17 +591,6 @@ wg_family_remove_peer_main() {
   if [[ "${verbose}" -eq 1 ]]; then
     "${WG_FAMILY_TOOL}" show "${iface}"
   fi
-}
-
-wg_family_remove_hosts_entry() {
-  local ip="$1"
-  local client_name="$2"
-  local tmp_file=""
-
-  tmp_file="$(mktemp)"
-  awk -v ip="${ip}" -v name="${client_name}" '$1 == ip && $2 == name { next } { print }' /etc/hosts > "${tmp_file}"
-  install -m 644 "${tmp_file}" /etc/hosts
-  rm -f "${tmp_file}"
 }
 
 wg_family_remove_client_main() {

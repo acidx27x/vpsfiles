@@ -9,6 +9,8 @@ WG_IF="${WG_IF:-${WG_IF_DEFAULT}}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
+# shellcheck source=wireguard-scripts/wg.sh
+. "${SCRIPT_DIR}/wg.sh"
 # shellcheck source=core/uninstall.sh
 . "${REPO_ROOT}/core/uninstall.sh"
 
@@ -30,6 +32,7 @@ main() {
     "  Server keys:       ${WG_DIR}/server_private_key, ${WG_DIR}/server_public_key" \
     "  Sysctl file:       ${SYSCTL_FILE}" \
     "  Client files:      ${CLIENTS_DIR} contents except .gitkeep" \
+    "  Hosts entries:     generated client entries in /etc/hosts" \
     "  Install backups:   ${BACKUP_ROOT}" \
     "  Script state:      last-ip.txt, last-ip6.txt, server-endpoint.txt," \
     "                     server-endpoint6.txt, server-port.txt, server-interface.txt," \
@@ -50,6 +53,7 @@ main() {
   vps_safe_remove_file_path "${WG_DIR}/server_private_key"
   vps_safe_remove_file_path "${WG_DIR}/server_public_key"
   vps_safe_remove_file_path "${SYSCTL_FILE}"
+  wg_family_remove_generated_hosts_entries
   vps_clean_clients_dir "${CLIENTS_DIR}" "${SCRIPT_DIR}/clients"
   vps_safe_remove_path "${BACKUP_ROOT}"
 

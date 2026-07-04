@@ -106,7 +106,7 @@ Remove AmneziaWG data created by this script bundle:
 sudo ./uninstall.sh
 ```
 
-`uninstall.sh` stops and disables `awg-quick@awg0`, removes the generated server config and keys, removes generated client files while keeping `clients/.gitkeep`, removes script state files and `install-backups`, and tries to remove the saved UFW UDP allow rule. It does not uninstall apt packages and does not remove normal WireGuard files.
+`uninstall.sh` stops and disables `awg-quick@awg0`, removes the generated server config and keys, removes generated client files while keeping `clients/.gitkeep`, removes generated `/etc/hosts` client entries, removes script state files and `install-backups`, and tries to remove the saved UFW UDP allow rule. It does not uninstall apt packages and does not remove normal WireGuard files.
 
 ## Client Setup
 
