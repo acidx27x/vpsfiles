@@ -304,7 +304,7 @@ wg_family_add_client_main() {
   fi
 
   vps_info "Adding peer to ${server_config}"
-  bash "${SCRIPT_DIR}/add-peer.sh" "${add_peer_args[@]}" "${client_name}"
+  bash "${SCRIPT_DIR}/add-peer.sh" "${add_peer_args[@]}" --config-only "${client_name}"
 
   printf '%s\n' "${ip}" > last-ip.txt
   printf '%s\n' "${ip6}" > last-ip6.txt
@@ -324,6 +324,8 @@ wg_family_add_client_main() {
 
 wg_family_add_peer_main() {
   local live_only=0
+  local config_only=0
+  local usage='usage: add-peer.sh [--verbose] [--config-only|--live-only] <client_name>'
   VERBOSE=0
 
   wg_family_require_settings
@@ -338,12 +340,16 @@ wg_family_add_peer_main() {
         live_only=1
         shift
         ;;
+      --config-only)
+        config_only=1
+        shift
+        ;;
       --)
         shift
         break
         ;;
       -*)
-        printf 'usage: add-peer.sh [--verbose] [--live-only] <client_name>\n'
+        printf '%s\n' "${usage}"
         exit 1
         ;;
       *)
@@ -352,8 +358,13 @@ wg_family_add_peer_main() {
     esac
   done
 
+  if [[ "${live_only}" -eq 1 && "${config_only}" -eq 1 ]]; then
+    printf '%s\n' "${usage}"
+    exit 1
+  fi
+
   if [[ $# -ne 1 ]]; then
-    printf 'usage: add-peer.sh [--verbose] [--live-only] <client_name>\n'
+    printf '%s\n' "${usage}"
     exit 1
   fi
 
@@ -369,6 +380,7 @@ wg_family_add_peer_main() {
   local allowed_ips=""
   local iface=""
   local server_config=""
+  local config_status=""
 
   vps_require_root "sudo ./add-peer.sh ..."
   vps_validate_client_name "${client_name}"
@@ -408,20 +420,35 @@ wg_family_add_peer_main() {
 
   if grep -qF "${pub_key}" "${server_config}"; then
     vps_info "Peer is already present in ${server_config}"
+    config_status="already present in ${server_config}"
   else
     grep -qF "AllowedIPs = ${ip}/32" "${server_config}" && vps_die "another peer already uses ${ip}/32 in ${server_config}"
     [[ -n "${ip6}" ]] && grep -qF "${ip6}/128" "${server_config}" && vps_die "another peer already uses ${ip6}/128 in ${server_config}"
 
     wg_family_add_peer_block "${server_config}" "${client_name}" "${pub_key}" "${psk}" "${allowed_ips}"
     vps_info "Added peer to ${server_config}: ${client_name}"
+    config_status="updated in ${server_config}"
   fi
 
-  vps_verbose "Restart ${WG_FAMILY_QUICK}@${iface} to apply this config change, or run add-peer.sh --live-only ${client_name} to add it to live ${iface} now."
+  if [[ "${config_only}" -eq 1 ]]; then
+    vps_verbose "Restart ${WG_FAMILY_QUICK}@${iface} to apply this config change, or run add-peer.sh --live-only ${client_name} to add it to live ${iface} now."
+    return 0
+  fi
+
+  if ! "${WG_FAMILY_TOOL}" set "${iface}" peer "${pub_key}" preshared-key "${psk_file}" allowed-ips "${allowed_ips}"; then
+    vps_die "peer config was ${config_status}, but live update failed for ${iface}: ${client_name}"
+  fi
+  vps_info "Added live peer to ${iface}: ${client_name}"
+  if [[ "${VERBOSE}" -eq 1 ]]; then
+    "${WG_FAMILY_TOOL}" show "${iface}"
+  fi
 }
 
 wg_family_remove_peer_main() {
   local live_only=0
+  local config_only=0
   local verbose=0
+  local usage='usage: remove-peer.sh [--verbose] [--config-only|--live-only] <client_name>'
 
   wg_family_require_settings
 
@@ -435,12 +462,16 @@ wg_family_remove_peer_main() {
         live_only=1
         shift
         ;;
+      --config-only)
+        config_only=1
+        shift
+        ;;
       --)
         shift
         break
         ;;
       -*)
-        printf 'usage: remove-peer.sh [--verbose] [--live-only] <client_name>\n'
+        printf '%s\n' "${usage}"
         exit 1
         ;;
       *)
@@ -449,8 +480,13 @@ wg_family_remove_peer_main() {
     esac
   done
 
+  if [[ "${live_only}" -eq 1 && "${config_only}" -eq 1 ]]; then
+    printf '%s\n' "${usage}"
+    exit 1
+  fi
+
   if [[ $# -ne 1 ]]; then
-    printf 'usage: remove-peer.sh [--verbose] [--live-only] <client_name>\n'
+    printf '%s\n' "${usage}"
     exit 1
   fi
 
@@ -460,6 +496,7 @@ wg_family_remove_peer_main() {
   local pub_key=""
   local iface=""
   local server_config=""
+  local config_status=""
 
   vps_require_root "sudo ./remove-peer.sh ..."
   vps_validate_client_name "${client_name}"
@@ -487,11 +524,25 @@ wg_family_remove_peer_main() {
   if grep -qF "${pub_key}" "${server_config}"; then
     wg_family_remove_peer_block "${server_config}" "${pub_key}"
     vps_info "Removed peer from ${server_config}: ${client_name}"
+    config_status="removed from ${server_config}"
   else
     vps_info "Peer is already absent from ${server_config}: ${client_name}"
+    config_status="already absent from ${server_config}"
   fi
+
+  if [[ "${config_only}" -eq 1 ]]; then
+    if [[ "${verbose}" -eq 1 ]]; then
+      printf 'Restart %s@%s to apply this config change, or run remove-peer.sh --live-only %s to remove it from live %s now.\n' "${WG_FAMILY_QUICK}" "${iface}" "${client_name}" "${iface}"
+    fi
+    return 0
+  fi
+
+  if ! "${WG_FAMILY_TOOL}" set "${iface}" peer "${pub_key}" remove; then
+    vps_die "peer config was ${config_status}, but live update failed for ${iface}: ${client_name}"
+  fi
+  vps_info "Removed live peer from ${iface}: ${client_name}"
   if [[ "${verbose}" -eq 1 ]]; then
-    printf 'Restart %s@%s to apply this config change, or run remove-peer.sh --live-only %s to remove it from live %s now.\n' "${WG_FAMILY_QUICK}" "${iface}" "${client_name}" "${iface}"
+    "${WG_FAMILY_TOOL}" show "${iface}"
   fi
 }
 
@@ -562,7 +613,7 @@ wg_family_remove_client_main() {
   fi
 
   vps_info "Removing peer from server config"
-  bash "${SCRIPT_DIR}/remove-peer.sh" "${remove_peer_args[@]}" "${client_name}"
+  bash "${SCRIPT_DIR}/remove-peer.sh" "${remove_peer_args[@]}" --config-only "${client_name}"
   vps_info "Removing live peer if present"
   bash "${SCRIPT_DIR}/remove-peer.sh" "${remove_peer_args[@]}" --live-only "${client_name}" || true
 

@@ -58,10 +58,16 @@ Create a client config that connects to the server's saved public IPv6 endpoint:
 sudo ./add-client.sh --ipv6-endpoint phone
 ```
 
-Add an already generated client back to the server config:
+Add an already generated client to the server config and live `awg0` interface:
 
 ```bash
 sudo ./add-peer.sh phone
+```
+
+Add an already generated client to the server config only:
+
+```bash
+sudo ./add-peer.sh --config-only phone
 ```
 
 Add an already generated client to the live `awg0` interface only:
@@ -70,10 +76,16 @@ Add an already generated client to the live `awg0` interface only:
 sudo ./add-peer.sh --live-only phone
 ```
 
-Remove an already generated client from the server config:
+Remove an already generated client from the server config and live `awg0` interface:
 
 ```bash
 sudo ./remove-peer.sh phone
+```
+
+Remove an already generated client from the server config only:
+
+```bash
+sudo ./remove-peer.sh --config-only phone
 ```
 
 Remove an already generated client from the live `awg0` interface only:
