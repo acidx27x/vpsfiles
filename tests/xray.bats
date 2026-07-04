@@ -50,6 +50,17 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "xray installer runner fails when download fails" {
+  cat > "${TEST_TMPDIR}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+exit 22
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/curl"
+
+  run xray_run_installer update
+  [ "$status" -ne 0 ]
+}
+
 @test "xray add and remove client mutate target inbound" {
   run xray_add_client_to_config "${XRAY_CONFIG}" "phone" "uuid-1" "sid-1" "xray"
   [ "$status" -eq 0 ]

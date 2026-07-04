@@ -12,6 +12,13 @@ AWG_IF="${AWG_IF:-${AWG_IF_DEFAULT}}"
 # shellcheck source=core/uninstall.sh
 . "${REPO_ROOT}/core/uninstall.sh"
 
+stop_amneziawg_service() {
+  vps_systemctl_stop_disable "awg-quick@${AWG_IF}"
+  if command -v awg-quick >/dev/null 2>&1; then
+    awg-quick down "${AWG_IF}" 2>/dev/null || true
+  fi
+}
+
 main() {
   vps_require_root "sudo bash ${0}"
   AWG_IF="$(vps_read_file_or_default "${SCRIPT_DIR}/server-interface.txt" "${AWG_IF}")"
@@ -36,18 +43,18 @@ main() {
     exit 1
   fi
 
-  vps_uninstall_stop_quick_service "awg-quick@${AWG_IF}" "awg-quick" "${AWG_IF}"
+  stop_amneziawg_service
   vps_ufw_delete_saved_rule "${SCRIPT_DIR}/server-port.txt" "udp"
 
-  vps_safe_remove_path "${AWG_DIR}/${AWG_IF}.conf"
-  vps_safe_remove_path "${AWG_DIR}/server_private_key"
-  vps_safe_remove_path "${AWG_DIR}/server_public_key"
-  vps_safe_remove_path "${SYSCTL_FILE}"
+  vps_safe_remove_file_path "${AWG_DIR}/${AWG_IF}.conf"
+  vps_safe_remove_file_path "${AWG_DIR}/server_private_key"
+  vps_safe_remove_file_path "${AWG_DIR}/server_public_key"
+  vps_safe_remove_file_path "${SYSCTL_FILE}"
   vps_clean_clients_dir "${CLIENTS_DIR}" "${SCRIPT_DIR}/clients"
   vps_safe_remove_path "${BACKUP_ROOT}"
 
   for state_file in last-ip.txt last-ip6.txt server-endpoint.txt server-endpoint6.txt server-port.txt server-interface.txt server-net.txt server-net6.txt obfuscation.env; do
-    vps_safe_remove_path "${SCRIPT_DIR}/${state_file}"
+    vps_safe_remove_file_path "${SCRIPT_DIR}/${state_file}"
   done
 
   vps_uninstall_finish_sysctl

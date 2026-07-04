@@ -251,6 +251,7 @@ wg_family_add_client_main() {
   wg_family_client_exists_with_ip "${ip6}" && vps_die "next IPv6 is already used by another client: ${ip6}"
 
   server_port="$(vps_read_file_or_default server-port.txt "${WG_FAMILY_DEFAULT_PORT}")"
+  vps_validate_port "${server_port}"
   case "${endpoint_source}" in
     ipv6)
       [[ -f server-endpoint6.txt ]] || vps_die "server-endpoint6.txt is missing; run install.sh again or create it with the public IPv6 endpoint"
@@ -259,6 +260,7 @@ wg_family_add_client_main() {
       ;;
     *)
       endpoint="$(vps_read_file_or_default server-endpoint.txt "$(hostname -f)")"
+      [[ -n "${endpoint}" ]] || vps_die "server endpoint is empty; run install.sh again or create server-endpoint.txt with the public endpoint"
       ;;
   esac
   server_endpoint="$(vps_format_endpoint "${endpoint}" "${server_port}")"

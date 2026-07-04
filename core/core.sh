@@ -168,9 +168,17 @@ vps_safe_remove_path() {
   [[ -n "${path}" && "${path}" != "/" ]] || vps_die "refusing to remove unsafe path: ${path}"
 
   if [[ -e "${path}" ]]; then
-    rm -rf "${path}"
+    rm -rf -- "${path}"
     printf 'Removed: %s\n' "${path}"
   fi
+}
+
+vps_safe_remove_file_path() {
+  local path="$1"
+
+  [[ -n "${path}" && "${path}" == /* && "${path}" != "/" ]] || vps_die "refusing to remove unsafe file path: ${path}"
+  [[ ! -d "${path}" ]] || vps_die "refusing to remove directory as file path: ${path}"
+  vps_safe_remove_path "${path}"
 }
 
 vps_remove_empty_dir() {
@@ -186,7 +194,7 @@ vps_safe_remove_client_dir() {
 
   [[ "${client_dir}" == "${clients_dir}/"* ]] || vps_die "refusing to remove unexpected path: ${client_dir}"
   [[ -d "${client_dir}" ]] || return 0
-  rm -rf "${client_dir}"
+  rm -rf -- "${client_dir}"
 }
 
 vps_clean_clients_dir() {

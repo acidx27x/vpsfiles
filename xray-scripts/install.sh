@@ -94,7 +94,7 @@ install_packages() {
 }
 
 install_xray() {
-  bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+  xray_run_installer install || die "Xray installer failed"
   vps_require_commands xray
 }
 

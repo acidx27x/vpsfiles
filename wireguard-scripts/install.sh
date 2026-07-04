@@ -255,6 +255,7 @@ collect_settings() {
 
   prompt WG_IF "WireGuard interface name" "${WG_IF}"
   prompt WG_PORT "WireGuard UDP port" "${WG_PORT}"
+  vps_validate_port "${WG_PORT}"
   prompt WG_NET "WireGuard IPv4 VPN subnet" "${WG_NET}"
   prompt WG_SERVER_IP "WireGuard server IPv4 VPN IP" "${WG_SERVER_IP}"
   prompt WG_NET6 "WireGuard IPv6 VPN subnet" "${WG_NET6}"
@@ -262,6 +263,7 @@ collect_settings() {
   prompt SERVER_IF "Public network interface for NAT" "${SERVER_IF:-${detected_if:-eth0}}"
   prompt WG_ENDPOINT "Public endpoint clients should connect to" "${WG_ENDPOINT:-${detected_endpoint:-$(hostname -f)}}"
   prompt WG_ENDPOINT6 "Public IPv6 endpoint clients can connect to" "${WG_ENDPOINT6:-${detected_endpoint6}}"
+  [[ -n "${WG_ENDPOINT}" ]] || vps_die "public endpoint cannot be empty"
 }
 
 print_summary() {

@@ -18,6 +18,6 @@ vps_service_is_active() {
 vps_restart_active_service() {
   local service="$1"
 
-  systemctl restart "${service}"
+  systemctl restart "${service}" || return 1
   systemctl is-active --quiet "${service}"
 }

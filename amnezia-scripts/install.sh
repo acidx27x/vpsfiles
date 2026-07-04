@@ -508,6 +508,7 @@ collect_settings() {
 
   prompt AWG_IF "AmneziaWG interface name" "${AWG_IF}"
   prompt AWG_PORT "AmneziaWG UDP port" "${AWG_PORT}"
+  vps_validate_port "${AWG_PORT}"
   prompt AWG_NET "AmneziaWG IPv4 VPN subnet" "${AWG_NET}"
   prompt AWG_SERVER_IP "AmneziaWG server IPv4 VPN IP" "${AWG_SERVER_IP}"
   prompt AWG_NET6 "AmneziaWG IPv6 VPN subnet" "${AWG_NET6}"
@@ -516,6 +517,7 @@ collect_settings() {
   prompt SERVER_IF "Public network interface for NAT" "${SERVER_IF:-${detected_if:-eth0}}"
   prompt AWG_ENDPOINT "Public endpoint clients should connect to" "${AWG_ENDPOINT:-${detected_endpoint:-$(hostname -f)}}"
   prompt AWG_ENDPOINT6 "Public IPv6 endpoint clients can connect to" "${AWG_ENDPOINT6:-${detected_endpoint6}}"
+  [[ -n "${AWG_ENDPOINT}" ]] || vps_die "public endpoint cannot be empty"
 }
 
 print_summary() {

@@ -46,7 +46,7 @@ main() {
   backup_bin="$(mktemp)"
   trap '[[ -z "${backup_bin:-}" ]] || rm -f -- "${backup_bin}"' EXIT
   cp -a "${xray_bin}" "${backup_bin}"
-  if ! bash -c "$(curl -fsSL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ update \
+  if ! xray_run_installer update \
     || ! command -v xray >/dev/null 2>&1 \
     || ! xray run -test -config "${config_file}" >/dev/null; then
     install -m 755 "${backup_bin}" "${xray_bin}"

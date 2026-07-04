@@ -5,6 +5,7 @@ VPS_XRAY_SH=1
 
 XRAY_INBOUND_TAG_DEFAULT="vless-reality-vision-443"
 XRAY_CLIENTS_DIR_DEFAULT="${SCRIPT_DIR}/clients"
+XRAY_INSTALLER_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 
 xray_inbound_tag() {
   printf '%s\n' "${INBOUND_TAG:-${XRAY_INBOUND_TAG_DEFAULT}}"
@@ -24,6 +25,22 @@ xray_generate_uuid() {
 
 xray_generate_short_id() {
   openssl rand -hex 8
+}
+
+xray_run_installer() {
+  local action="$1"
+  local installer=""
+
+  installer="$(mktemp)"
+  if ! curl -fsSL "${XRAY_INSTALLER_URL}" -o "${installer}"; then
+    rm -f "${installer}"
+    return 1
+  fi
+  if ! bash "${installer}" "${action}"; then
+    rm -f "${installer}"
+    return 1
+  fi
+  rm -f "${installer}"
 }
 
 xray_short_id_exists() {

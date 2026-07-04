@@ -57,22 +57,22 @@ main() {
   vps_systemctl_stop_disable "${service}"
   vps_ufw_delete_saved_rule "${SCRIPT_DIR}/server-port.txt" "tcp"
 
-  vps_safe_remove_path "${service_file}"
+  vps_safe_remove_file_path "${service_file}"
   vps_safe_remove_path "${override_dir}"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
   fi
 
-  vps_safe_remove_path "${config_file}"
+  vps_safe_remove_file_path "${config_file}"
   vps_remove_empty_dir "$(dirname "${config_file}")"
   vps_safe_remove_path "${TELEMT_WORK_DIR}"
   vps_safe_remove_path "${TELEMT_DATA_DIR}"
-  vps_safe_remove_path "${bin_path}"
+  vps_safe_remove_file_path "${bin_path}"
   vps_clean_clients_dir "${CLIENTS_DIR}" "${SCRIPT_DIR}/clients"
   vps_safe_remove_path "${BACKUP_ROOT}"
 
   for state_file in public-host.txt server-port.txt tls-domain.txt telemt-config-path.txt telemt-service.txt telemt-bin-path.txt; do
-    vps_safe_remove_path "${SCRIPT_DIR}/${state_file}"
+    vps_safe_remove_file_path "${SCRIPT_DIR}/${state_file}"
   done
 
   echo "Uninstall complete."

@@ -48,6 +48,22 @@ EOF
   [ "$(sed -n '2p' "${log_file}")" = "is-active --quiet xray" ]
 }
 
+@test "active service restart fails when restart command fails" {
+  load_update
+  cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  restart) exit 1 ;;
+  is-active) exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/systemctl"
+
+  run vps_restart_active_service "xray"
+  [ "${status}" -ne 0 ]
+}
+
 @test "Telemt release URLs support latest and pinned versions" {
   load_telemt
   cat > "${TEST_TMPDIR}/bin/uname" <<'EOF'

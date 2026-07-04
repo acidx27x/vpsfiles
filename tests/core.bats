@@ -17,6 +17,12 @@ setup() {
   [[ "$output" == *"client name may only contain"* ]]
 }
 
+@test "ports reject out of range values" {
+  run vps_validate_port "70000"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"port must be between 1 and 65535"* ]]
+}
+
 @test "endpoint formatting preserves host ports and brackets IPv6" {
   run vps_format_endpoint "vpn.example.com" "51820"
   [ "$status" -eq 0 ]
@@ -42,6 +48,21 @@ setup() {
   run vps_read_file_or_default "${TEST_TMPDIR}/missing.txt" "default"
   [ "$status" -eq 0 ]
   [ "$output" = "default" ]
+}
+
+@test "safe file removal refuses directories" {
+  make_temp_dir
+  printf 'state\n' > "${TEST_TMPDIR}/state.txt"
+  mkdir -p "${TEST_TMPDIR}/config-dir"
+
+  run vps_safe_remove_file_path "${TEST_TMPDIR}/state.txt"
+  [ "$status" -eq 0 ]
+  [ ! -e "${TEST_TMPDIR}/state.txt" ]
+
+  run vps_safe_remove_file_path "${TEST_TMPDIR}/config-dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing to remove directory as file path"* ]]
+  [ -d "${TEST_TMPDIR}/config-dir" ]
 }
 
 teardown() {

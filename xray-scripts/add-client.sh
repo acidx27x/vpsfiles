@@ -71,6 +71,7 @@ main() {
       ;;
   esac
   port="$(vps_read_file_or_default server-port.txt "443")"
+  vps_validate_port "${port}"
   server_name="$(vps_read_file_or_default reality-server-name.txt "www.firefox.com")"
   [[ -f reality-public-key.txt ]] || vps_die "reality-public-key.txt is missing; run install.sh first"
   public_key="$(cat reality-public-key.txt)"

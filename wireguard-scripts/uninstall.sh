@@ -12,6 +12,13 @@ WG_IF="${WG_IF:-${WG_IF_DEFAULT}}"
 # shellcheck source=core/uninstall.sh
 . "${REPO_ROOT}/core/uninstall.sh"
 
+stop_wireguard_service() {
+  vps_systemctl_stop_disable "wg-quick@${WG_IF}"
+  if command -v wg-quick >/dev/null 2>&1; then
+    wg-quick down "${WG_IF}" 2>/dev/null || true
+  fi
+}
+
 main() {
   vps_require_root "sudo bash ${0}"
   WG_IF="$(vps_read_file_or_default "${SCRIPT_DIR}/server-interface.txt" "${WG_IF}")"
@@ -36,18 +43,18 @@ main() {
     exit 1
   fi
 
-  vps_uninstall_stop_quick_service "wg-quick@${WG_IF}" "wg-quick" "${WG_IF}"
+  stop_wireguard_service
   vps_ufw_delete_saved_rule "${SCRIPT_DIR}/server-port.txt" "udp"
 
-  vps_safe_remove_path "${WG_DIR}/${WG_IF}.conf"
-  vps_safe_remove_path "${WG_DIR}/server_private_key"
-  vps_safe_remove_path "${WG_DIR}/server_public_key"
-  vps_safe_remove_path "${SYSCTL_FILE}"
+  vps_safe_remove_file_path "${WG_DIR}/${WG_IF}.conf"
+  vps_safe_remove_file_path "${WG_DIR}/server_private_key"
+  vps_safe_remove_file_path "${WG_DIR}/server_public_key"
+  vps_safe_remove_file_path "${SYSCTL_FILE}"
   vps_clean_clients_dir "${CLIENTS_DIR}" "${SCRIPT_DIR}/clients"
   vps_safe_remove_path "${BACKUP_ROOT}"
 
   for state_file in last-ip.txt last-ip6.txt server-endpoint.txt server-endpoint6.txt server-port.txt server-interface.txt server-net.txt server-net6.txt; do
-    vps_safe_remove_path "${SCRIPT_DIR}/${state_file}"
+    vps_safe_remove_file_path "${SCRIPT_DIR}/${state_file}"
   done
 
   vps_uninstall_finish_sysctl
