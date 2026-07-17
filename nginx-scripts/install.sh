@@ -9,6 +9,7 @@ NGINX_RENEWAL_HOOK_DEFAULT="/etc/letsencrypt/renewal-hooks/deploy/reload-xray-fa
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+NGINX_STATE_DIR="${NGINX_STATE_DIR:-${SCRIPT_DIR}}"
 NGINX_TEMPLATE="${SCRIPT_DIR}/fallback-site.conf.example"
 NGINX_RENEWAL_HOOK_SOURCE="${SCRIPT_DIR}/reload-nginx.sh"
 BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
@@ -31,7 +32,7 @@ NGINX_RENEWAL_HOOK="${NGINX_RENEWAL_HOOK:-${NGINX_RENEWAL_HOOK_DEFAULT}}"
 require_files() {
   local file=""
 
-  for file in "${NGINX_TEMPLATE}" "${NGINX_RENEWAL_HOOK_SOURCE}"; do
+  for file in "${NGINX_TEMPLATE}" "${NGINX_RENEWAL_HOOK_SOURCE}" "${SCRIPT_DIR}/uninstall.sh"; do
     [[ -f "${file}" ]] || vps_die "required file is missing: ${file}"
   done
 }
@@ -53,6 +54,7 @@ collect_settings() {
   [[ "${NGINX_CONFIG}" != "/" && "${NGINX_ENABLED_CONFIG}" != "/" && "${NGINX_WEB_ROOT}" != "/" && "${NGINX_RENEWAL_HOOK}" != "/" ]] \
     || vps_die "Nginx managed paths must not be the filesystem root"
   [[ "${NGINX_CONFIG}" != "${NGINX_ENABLED_CONFIG}" ]] || vps_die "available and enabled Nginx config paths must differ"
+  [[ "${NGINX_STATE_DIR}" == /* && "${NGINX_STATE_DIR}" != "/" ]] || vps_die "Nginx state directory must be absolute and safe"
 }
 
 install_packages() {
@@ -79,6 +81,24 @@ backup_managed_files() {
   [[ ! -e "${NGINX_ENABLED_CONFIG}" && ! -L "${NGINX_ENABLED_CONFIG}" ]] || cp -a "${NGINX_ENABLED_CONFIG}" "${backup_dir}/enabled-config"
   [[ ! -e "${NGINX_RENEWAL_HOOK}" ]] || cp -a "${NGINX_RENEWAL_HOOK}" "${backup_dir}/renewal-hook"
   printf 'Backed up existing managed Nginx files to: %s\n' "${backup_dir}"
+}
+
+write_script_state() {
+  install -d -m 755 "${NGINX_STATE_DIR}"
+  printf '%s\n' "${NGINX_DOMAIN}" > "${NGINX_STATE_DIR}/fallback-domain.txt"
+  printf '%s\n' "${NGINX_CONFIG}" > "${NGINX_STATE_DIR}/nginx-config-path.txt"
+  printf '%s\n' "${NGINX_ENABLED_CONFIG}" > "${NGINX_STATE_DIR}/nginx-enabled-config-path.txt"
+  printf '%s\n' "${NGINX_WEB_ROOT}" > "${NGINX_STATE_DIR}/nginx-web-root-path.txt"
+  printf '%s\n' "${NGINX_RENEWAL_HOOK}" > "${NGINX_STATE_DIR}/nginx-renewal-hook-path.txt"
+  printf '80\n' > "${NGINX_STATE_DIR}/server-port.txt"
+  chmod 600 \
+    "${NGINX_STATE_DIR}/fallback-domain.txt" \
+    "${NGINX_STATE_DIR}/nginx-config-path.txt" \
+    "${NGINX_STATE_DIR}/nginx-enabled-config-path.txt" \
+    "${NGINX_STATE_DIR}/nginx-web-root-path.txt" \
+    "${NGINX_STATE_DIR}/nginx-renewal-hook-path.txt" \
+    "${NGINX_STATE_DIR}/server-port.txt"
+  chmod +x "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 }
 
 prepare_web_root() {
@@ -124,7 +144,21 @@ install_bootstrap_config() {
 }
 
 setup_firewall() {
-  vps_ufw_allow "80" "tcp"
+  local added_rule=0
+  local previous_state=""
+
+  if [[ -f "${NGINX_STATE_DIR}/firewall-rule-added.txt" ]]; then
+    previous_state="$(<"${NGINX_STATE_DIR}/firewall-rule-added.txt")"
+    [[ "${previous_state}" == "0" || "${previous_state}" == "1" ]] \
+      || vps_die "invalid Nginx firewall ownership state"
+    added_rule="${previous_state}"
+  fi
+  if ! ufw show added 2>/dev/null | grep -Eq '^ufw allow 80/tcp$'; then
+    ufw allow 80/tcp >/dev/null
+    added_rule=1
+  fi
+  printf '%s\n' "${added_rule}" > "${NGINX_STATE_DIR}/firewall-rule-added.txt"
+  chmod 600 "${NGINX_STATE_DIR}/firewall-rule-added.txt"
   if ! ufw status | grep -q "Status: active"; then
     printf 'Before enabling UFW, verify that your SSH port already has an allow rule.\n'
   fi
@@ -182,9 +216,12 @@ print_summary() {
   printf '  REALITY serverName/SNI:   %s\n\n' "${NGINX_DOMAIN}"
   printf 'After Xray owns public port 443, test active probing with:\n'
   printf '  curl -v --resolve %s:443:<VPS_IP> https://%s/\n' "${NGINX_DOMAIN}" "${NGINX_DOMAIN}"
+  printf '\nRemove this fallback independently with:\n'
+  printf '  cd %s\n' "${SCRIPT_DIR}"
+  printf '  sudo ./uninstall.sh\n'
 }
 
-main() {
+nginx_install_main() {
   vps_require_root "sudo ./install.sh"
   require_files
   vps_require_supported_apt_os
@@ -199,6 +236,7 @@ main() {
     exit 1
   fi
 
+  write_script_state
   backup_managed_files
   install_packages
   vps_require_commands certbot curl nginx systemctl ufw
@@ -212,4 +250,6 @@ main() {
   print_summary
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  nginx_install_main "$@"
+fi

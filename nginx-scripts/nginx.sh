@@ -70,3 +70,48 @@ nginx_render_site_config() {
     -e "s|:WEB_ROOT:|${escaped_web_root}|g" \
     "${template}"
 }
+
+nginx_certificate_name_from_config() {
+  local config_file="$1"
+  local letsencrypt_root="${2%/}"
+
+  [[ -f "${config_file}" ]] || return 1
+  awk -v prefix="${letsencrypt_root}/live/" '
+    $1 == "ssl_certificate" {
+      path = $2
+      sub(/;$/, "", path)
+      if (index(path, prefix) != 1 || path !~ /\/fullchain\.pem$/) {
+        next
+      }
+      path = substr(path, length(prefix) + 1)
+      sub(/\/fullchain\.pem$/, "", path)
+      if (path != "" && path !~ /\//) {
+        print path
+        exit
+      }
+    }
+  ' "${config_file}"
+}
+
+nginx_find_certificate_references() {
+  local certificate_dir="${1%/}"
+  local reference_roots="$2"
+  local root=""
+  local match=""
+  local -a roots=()
+
+  IFS=':' read -r -a roots <<< "${reference_roots}"
+  for root in "${roots[@]}"; do
+    [[ -d "${root}" ]] || continue
+    while IFS= read -r match; do
+      [[ -n "${match}" ]] && printf '%s\n' "${match}"
+    done < <(grep -R -l -F -- "${certificate_dir}/" "${root}" 2>/dev/null || true)
+  done
+}
+
+nginx_has_port_80_listener() {
+  local nginx_config_root="$1"
+
+  [[ -d "${nginx_config_root}" ]] || return 1
+  grep -R -E -q -- '(^|[[:space:]{;])listen[[:space:]]+([^;[:space:]]*:)?80([[:space:];]|$)' "${nginx_config_root}" 2>/dev/null
+}

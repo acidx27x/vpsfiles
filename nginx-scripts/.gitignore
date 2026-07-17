@@ -1,1 +1,8 @@
 install-backups/
+/fallback-domain.txt
+/firewall-rule-added.txt
+/nginx-config-path.txt
+/nginx-enabled-config-path.txt
+/nginx-renewal-hook-path.txt
+/nginx-web-root-path.txt
+/server-port.txt

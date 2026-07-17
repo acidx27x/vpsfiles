@@ -39,6 +39,12 @@ load_nginx() {
   . "${REPO_ROOT}/nginx-scripts/nginx.sh"
 }
 
+load_nginx_uninstall() {
+  load_nginx
+  # shellcheck source=nginx-scripts/uninstall.sh
+  . "${REPO_ROOT}/nginx-scripts/uninstall.sh"
+}
+
 load_docker() {
   load_core
   # shellcheck source=core/install.sh

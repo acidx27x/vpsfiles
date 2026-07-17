@@ -24,9 +24,10 @@ The standalone Nginx fallback installer is run separately from Xray:
 ```bash
 cd nginx-scripts
 sudo ./install.sh
+sudo ./uninstall.sh
 ```
 
-It creates a real HTTPS site on an internal listener and prints the target and SNI values to enter in `xray-scripts/install.sh`.
+It creates a real HTTPS site on an internal listener and prints the target and SNI values to enter in `xray-scripts/install.sh`. Its standalone uninstaller removes the fallback and safely handles the dedicated certificate without coupling cleanup to Xray.
 
 The standalone host maintenance installer is also independent of the protocol bundles:
 
