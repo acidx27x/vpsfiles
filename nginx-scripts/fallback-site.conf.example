@@ -1,0 +1,31 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name :DOMAIN:;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root :WEB_ROOT:;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 127.0.0.1::INTERNAL_PORT: ssl http2;
+    server_name :DOMAIN:;
+
+    root :WEB_ROOT:;
+    index index.html;
+
+    ssl_certificate /etc/letsencrypt/live/:DOMAIN:/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/:DOMAIN:/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
