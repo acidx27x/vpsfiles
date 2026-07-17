@@ -1,0 +1,35 @@
+x-proxy-environment: &proxy-environment
+  TG_WS_PROXY_PORT: "${TG_WS_PROXY_PORT}"
+  TG_WS_PROXY_SECRET: "${TG_WS_PROXY_SECRET}"
+  TG_WS_PROXY_DC_IPS: "${TG_WS_PROXY_DC_IPS}"
+  TG_WS_PROXY_CF_WORKER: "${TG_WS_PROXY_CF_WORKER:-}"
+
+x-proxy: &proxy
+  image: "${TG_WS_PROXY_IMAGE}"
+  network_mode: host
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: 5m
+      max-file: "2"
+  command:
+    - --no-cfproxy
+
+services:
+  proxy-ipv4:
+    <<: *proxy
+    environment:
+      <<: *proxy-environment
+      TG_WS_PROXY_HOST: 0.0.0.0
+
+  proxy-ipv6:
+    <<: *proxy
+    environment:
+      <<: *proxy-environment
+      TG_WS_PROXY_HOST: "${TG_WS_PROXY_IPV6}"
