@@ -52,7 +52,7 @@ main() {
   [[ -n "${short_id}" ]] || vps_die "client shortId is empty"
 
   vps_info "Removing Xray VLESS client: ${client_name}"
-  xray_remove_client_from_config "${config_file}" "${client_uuid}" "${short_id}" "${service}"
+  xray_remove_client_from_config "${config_file}" "${client_name}" "${client_uuid}" "${short_id}" "${service}"
   vps_safe_remove_client_dir "${client_dir}" "${clients_dir}"
   vps_info "Removed client files for: ${client_name}"
 }

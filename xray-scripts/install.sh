@@ -24,6 +24,7 @@ XRAY_TARGET="${XRAY_TARGET:-${XRAY_TARGET_DEFAULT}}"
 XRAY_SERVER_NAME="${XRAY_SERVER_NAME:-${XRAY_SERVER_NAME_DEFAULT}}"
 XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
 XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
+XRAY_NEXT_HOP_URI="${XRAY_NEXT_HOP_URI:-}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -47,6 +48,7 @@ require_files() {
     "${SERVER_TEMPLATE}" \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/set-client-route.sh" \
     "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh"; do
     if [[ ! -f "${file}" ]]; then
@@ -193,6 +195,7 @@ generate_short_id() {
 
 render_server_config() {
   local tmp_file=""
+  local next_hop_file=""
 
   tmp_file="$(mktemp --suffix=.json)"
   jq \
@@ -208,6 +211,12 @@ render_server_config() {
       | .inbounds[0].streamSettings.realitySettings.privateKey = $private_key
       | .inbounds[0].streamSettings.realitySettings.shortIds = [$short_id]' \
     "${SERVER_TEMPLATE}" > "${tmp_file}"
+
+  if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
+    next_hop_file="$(mktemp --suffix=.json)"
+    xray_render_next_hop_config "${tmp_file}" "${next_hop_file}"
+    mv "${next_hop_file}" "${tmp_file}"
+  fi
 
   xray run -test -config "${tmp_file}" >/dev/null
   install -d -m 755 "$(dirname "${XRAY_CONFIG}")"
@@ -233,6 +242,7 @@ prepare_script_state() {
   chmod +x \
     "${SCRIPT_DIR}/add-client.sh" \
     "${SCRIPT_DIR}/remove-client.sh" \
+    "${SCRIPT_DIR}/set-client-route.sh" \
     "${SCRIPT_DIR}/update.sh" \
     "${SCRIPT_DIR}/uninstall.sh" 2>/dev/null || true
 }
@@ -261,10 +271,14 @@ collect_settings() {
   prompt XRAY_ENDPOINT6 "Public IPv6 endpoint clients can connect to" "${XRAY_ENDPOINT6:-${detected_endpoint6}}"
   prompt XRAY_TARGET "REALITY target host:port" "${XRAY_TARGET}"
   prompt XRAY_SERVER_NAME "REALITY serverName/SNI" "${XRAY_SERVER_NAME:-${default_server_name}}"
+  prompt XRAY_NEXT_HOP_URI "Next-hop VLESS URI (leave empty for direct exit)" "${XRAY_NEXT_HOP_URI}"
 
   [[ -n "${XRAY_ENDPOINT}" ]] || die "public endpoint cannot be empty"
   [[ -n "${XRAY_TARGET}" ]] || die "REALITY target cannot be empty"
   [[ -n "${XRAY_SERVER_NAME}" ]] || die "REALITY serverName cannot be empty"
+  if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
+    xray_parse_next_hop_uri "${XRAY_NEXT_HOP_URI}"
+  fi
 }
 
 print_summary() {
@@ -281,12 +295,22 @@ print_summary() {
   echo "REALITY target:    ${XRAY_TARGET}"
   echo "REALITY SNI:       ${XRAY_SERVER_NAME}"
   echo "Server shortId:    ${XRAY_SERVER_SHORT_ID}"
+  if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
+    echo "Next-hop outbound: available (${XRAY_NEXT_HOP_ADDRESS}:${XRAY_NEXT_HOP_PORT})"
+    echo "Client routing:    direct by default; next hop by explicit selection"
+  else
+    echo "Next-hop outbound: not configured"
+    echo "Client routing:    direct exit"
+  fi
   echo "Clients:           none"
   echo
   echo "Add clients with:"
   echo "  cd ${SCRIPT_DIR}"
   echo "  sudo ./add-client.sh phone"
+  echo "  sudo ./add-client.sh --next-hop tablet"
   echo "  sudo ./add-client.sh --ipv6-endpoint phone"
+  echo "  sudo ./set-client-route.sh --next-hop phone"
+  echo "  sudo ./set-client-route.sh --direct phone"
   echo "  sudo ./remove-client.sh phone"
   echo "  sudo ./uninstall.sh"
   echo

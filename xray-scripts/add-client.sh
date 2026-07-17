@@ -15,6 +15,7 @@ CLIENTS_DIR="${SCRIPT_DIR}/clients"
 
 main() {
   local endpoint_source="ipv4"
+  local route="direct"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -22,12 +23,16 @@ main() {
         endpoint_source="ipv6"
         shift
         ;;
+      --next-hop)
+        route="next-hop"
+        shift
+        ;;
       --)
         shift
         break
         ;;
       -*)
-        printf 'usage: add-client.sh [--ipv6-endpoint] <client_name>\n'
+        printf 'usage: add-client.sh [--ipv6-endpoint] [--next-hop] <client_name>\n'
         exit 1
         ;;
       *)
@@ -37,7 +42,7 @@ main() {
   done
 
   if [[ $# -ne 1 ]]; then
-    printf 'usage: add-client.sh [--ipv6-endpoint] <client_name>\n'
+    printf 'usage: add-client.sh [--ipv6-endpoint] [--next-hop] <client_name>\n'
     exit 1
   fi
 
@@ -99,10 +104,12 @@ main() {
     (( attempts < 10 )) || vps_die "could not generate a unique shortId"
   done
 
-  vps_info "Adding Xray VLESS client: ${client_name}"
-  xray_add_client_to_config "${config_file}" "${client_name}" "${client_uuid}" "${short_id}" "${service}"
+  vps_info "Adding Xray VLESS client: ${client_name} (${route})"
+  xray_add_client_to_config "${config_file}" "${client_name}" "${client_uuid}" "${short_id}" "${service}" "${route}"
   xray_write_client_artifacts "${client_name}" "${client_uuid}" "${short_id}" "${endpoint}" "${port}" "${server_name}" "${public_key}"
   vps_info "Created VLESS URI: ${client_dir}/vless-${client_name}.txt"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
