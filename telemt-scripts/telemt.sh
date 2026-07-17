@@ -142,11 +142,22 @@ telemt_upsert_key() {
       }
       return left
     }
+    function flush_pending_blanks(normalize, i) {
+      if (normalize) {
+        print ""
+      } else {
+        for (i = 0; i < pending_blanks; i++) {
+          print ""
+        }
+      }
+      pending_blanks = 0
+    }
     BEGIN {
       target = "[" table "]"
       in_table = 0
       found_table = 0
       wrote = 0
+      pending_blanks = 0
     }
     /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
       current = $0
@@ -154,11 +165,21 @@ telemt_upsert_key() {
       if (in_table && !wrote) {
         print "\"" key "\" = " value
         wrote = 1
+        flush_pending_blanks(1)
+      } else if (in_table) {
+        flush_pending_blanks(0)
       }
       in_table = (current == target)
       if (in_table) {
         found_table = 1
       }
+    }
+    in_table && /^[[:space:]]*$/ {
+      pending_blanks++
+      next
+    }
+    in_table && pending_blanks > 0 {
+      flush_pending_blanks(0)
     }
     in_table && index($0, "=") > 0 && parsed_key($0) == key {
       print "\"" key "\" = " value
@@ -173,6 +194,11 @@ telemt_upsert_key() {
         print "\"" key "\" = " value
       } else if (in_table && !wrote) {
         print "\"" key "\" = " value
+        if (pending_blanks > 0) {
+          flush_pending_blanks(1)
+        }
+      } else if (in_table) {
+        flush_pending_blanks(0)
       }
     }
   ' "${config_file}" > "${tmp_file}"

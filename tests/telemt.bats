@@ -36,6 +36,32 @@ teardown() {
   assert_file_not_contains "${TELEMT_CONFIG}" '"phone" = "new-secret"'
 }
 
+@test "telemt upsert keeps table entries together" {
+  cat > "${TELEMT_CONFIG}" <<'EOF'
+[access.users]
+"main" = "secret"
+
+
+
+[access.user_max_unique_ips]
+"main" = 2
+EOF
+
+  telemt_upsert_key "${TELEMT_CONFIG}" "access.users" "family" '"family-secret"'
+  telemt_upsert_key "${TELEMT_CONFIG}" "access.user_max_unique_ips" "family" "1"
+
+  run diff -u - "${TELEMT_CONFIG}" <<'EOF'
+[access.users]
+"main" = "secret"
+"family" = "family-secret"
+
+[access.user_max_unique_ips]
+"main" = 2
+"family" = 1
+EOF
+  [ "$status" -eq 0 ]
+}
+
 @test "telemt upsert creates a missing table" {
   local config="${TEST_TMPDIR}/empty.toml"
   printf '# empty\n' > "${config}"
