@@ -173,6 +173,33 @@ EOF
   [ "${status}" -eq 0 ]
 }
 
+@test "old image cleanup is limited to unused tg-ws bundle images" {
+  local docker_log="${TEST_TMPDIR}/docker-prune.log"
+
+  export TEST_DOCKER_PRUNE_LOG="${docker_log}"
+  cat > "${TEST_TMPDIR}/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_DOCKER_PRUNE_LOG}"
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/docker"
+
+  run tg_ws_cleanup_old_images
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${docker_log}")" = "image prune --all --force --filter label=${TG_WS_BUNDLE_LABEL}" ]
+}
+
+@test "old image cleanup failure does not turn a verified update into a failure" {
+  cat > "${TEST_TMPDIR}/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/docker"
+
+  run tg_ws_cleanup_old_images
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"updated, but unused old bundle images could not be removed"* ]]
+}
+
 @test "project state rejects one-running one-stopped containers" {
   vps_docker_compose() {
     case "${*: -1}" in

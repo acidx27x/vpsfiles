@@ -130,6 +130,7 @@ main() {
   fi
 
   printf '%s\n' "${version}" > "${SCRIPT_DIR}/installed-version.txt"
+  tg_ws_cleanup_old_images
   printf 'tg-ws-proxy update complete: %s -> %s.\n' "${current_version}" "${version}"
   if [[ "${previous_state}" == "stopped" ]]; then
     printf 'The containers were stopped before the update and remain stopped.\n'

@@ -8,6 +8,7 @@ This repository contains standalone Debian/Ubuntu VPS script bundles for:
 - `telemt-scripts`
 - `nginx-scripts` (standalone HTTPS fallback site for Xray REALITY)
 - `tg-ws-scripts` (Docker-based TG WS Proxy with IPv4/IPv6 listeners)
+- `system-scripts` (bounded logs, safe cleanup, zram, and host package updates)
 
 Each bundle keeps its existing public commands, for example:
 
@@ -26,6 +27,15 @@ sudo ./install.sh
 ```
 
 It creates a real HTTPS site on an internal listener and prints the target and SNI values to enter in `xray-scripts/install.sh`.
+
+The standalone host maintenance installer is also independent of the protocol bundles:
+
+```bash
+cd system-scripts
+sudo ./install.sh
+```
+
+It derives bounded journal and coredump limits from the VPS resources, schedules safe daily cleanup, enables log rotation, and configures compressed zram swap when supported. See `system-scripts/README.md` for managed paths and behavior.
 
 When Xray is installed with an optional next-hop URI, routing is selected per client:
 
@@ -59,9 +69,12 @@ cd amnezia-scripts && sudo ./update.sh
 cd xray-scripts && sudo ./update.sh
 cd telemt-scripts && sudo ./update.sh
 cd tg-ws-scripts && sudo ./update.sh
+cd system-scripts && sudo ./update.sh
 ```
 
-Updates change only runtime components required by the selected bundle, preserve server configuration, keys, clients, endpoints, firewall rules, and sysctl state, and restart a service only when it was already active. Xray and Telemt restore their previous binary if the updated binary cannot validate or restart. TG WS Proxy builds a versioned image and restores the previous Compose environment and containers if cutover fails. Set `TELEMT_VERSION=<version>` or `TG_WS_PROXY_VERSION=<version>` before the corresponding updater to request a specific release; the default is `latest`.
+Protocol updates change only runtime components required by the selected bundle, preserve server configuration, keys, clients, endpoints, firewall rules, and sysctl state, and restart a service only when it was already active. Xray and Telemt restore their previous binary if the updated binary cannot validate or restart. TG WS Proxy builds a versioned image, restores the previous Compose environment and containers if cutover fails, and removes only unused older images carrying its bundle label after success. Set `TELEMT_VERSION=<version>` or `TG_WS_PROXY_VERSION=<version>` before the corresponding updater to request a specific release; the default is `latest`.
+
+The system updater uses APT's non-removing upgrade mode, clears downloaded package archives, reports held packages and required reboots, and never reboots automatically.
 
 New client creation keeps only the artifacts required for use and management. Existing client directories are never removed or compacted automatically.
 

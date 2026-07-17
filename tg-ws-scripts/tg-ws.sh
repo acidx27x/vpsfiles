@@ -147,6 +147,15 @@ tg_ws_image_ref() {
   printf '%s:%s\n' "${image_repository}" "${version}"
 }
 
+tg_ws_cleanup_old_images() {
+  if ! docker image prune \
+    --all \
+    --force \
+    --filter "label=${TG_WS_BUNDLE_LABEL}"; then
+    printf 'WARNING: tg-ws-proxy was updated, but unused old bundle images could not be removed.\n' >&2
+  fi
+}
+
 tg_ws_build_image() {
   local source_directory="$1"
   local version="$2"

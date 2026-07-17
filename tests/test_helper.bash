@@ -53,6 +53,32 @@ load_tg_ws() {
   . "${REPO_ROOT}/tg-ws-scripts/tg-ws.sh"
 }
 
+load_system() {
+  load_core
+  # shellcheck source=system-scripts/system.sh
+  . "${REPO_ROOT}/system-scripts/system.sh"
+}
+
+load_maintenance() {
+  # shellcheck source=system-scripts/cleanup.sh
+  . "${REPO_ROOT}/system-scripts/cleanup.sh"
+}
+
+load_system_update() {
+  # shellcheck source=system-scripts/update.sh
+  . "${REPO_ROOT}/system-scripts/update.sh"
+}
+
+load_system_install() {
+  # shellcheck source=system-scripts/install.sh
+  . "${REPO_ROOT}/system-scripts/install.sh"
+}
+
+load_system_uninstall() {
+  # shellcheck source=system-scripts/uninstall.sh
+  . "${REPO_ROOT}/system-scripts/uninstall.sh"
+}
+
 make_temp_dir() {
   TEST_TMPDIR="$(mktemp -d)"
 }
