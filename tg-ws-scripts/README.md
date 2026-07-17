@@ -6,17 +6,17 @@ The setup is suitable for a company VPS in Russia when the provider permits it a
 
 ## Architecture
 
-The installer creates one Compose project with two containers:
+The installer creates one Compose project with an IPv4 container and, when configured, an IPv6 container:
 
 ```text
 Telegram clients
   ├─ IPv4 VPS:1443 -> tg-ws proxy IPv4 container ─┐
-  └─ IPv6 VPS:1443 -> tg-ws proxy IPv6 container ─┴─ WSS -> Telegram DC
+  └─ optional IPv6 VPS:1443 -> IPv6 container ────┴─ WSS -> Telegram DC
                                                         ├─ optional restricted Cloudflare Worker
                                                         └─ direct TCP fallback
 ```
 
-Both containers use the same 32-hex secret and upstream DC configuration. They use host networking so UFW remains responsible for the public port; Docker bridge-published ports can otherwise bypass ordinary UFW rules. The upstream public CfProxy pool is explicitly disabled with `--no-cfproxy`.
+The configured containers use the same 32-hex secret and upstream DC configuration. They use host networking so UFW remains responsible for the public port; Docker bridge-published ports can otherwise bypass ordinary UFW rules. The upstream public CfProxy pool is explicitly disabled with `--no-cfproxy`.
 
 FakeTLS, Nginx, Xray, and shared port `443` are not part of this setup. Your existing Xray proxy is left untouched. Adding FakeTLS later would require a separate port-443 routing design and is not needed for this standalone port `1443` deployment.
 
@@ -24,8 +24,8 @@ FakeTLS, Nginx, Xray, and shared port `443` are not part of this setup. Your exi
 
 - Debian or Ubuntu with systemd.
 - Root access.
-- Public IPv4 and a global IPv6 address assigned to the VPS.
-- TCP port `1443` available on both address families.
+- Public IPv4; a global IPv6 address assigned to the VPS is optional.
+- TCP port `1443` available on each configured address family.
 - Outbound HTTPS access to GitHub, `download.docker.com`, Docker Hub, Cloudflare when a Worker is used, and Telegram.
 
 Docker Engine and Compose v2 are reused when already healthy. If Docker is completely absent, the shared [`core/docker.sh`](../core/docker.sh) helper installs Docker CE from Docker's official signed apt repository. Partial or broken Docker installations are not replaced automatically; repair them first using the guidance in [`core/README.md`](../core/README.md).
@@ -39,12 +39,12 @@ sudo ./install.sh
 
 The installer asks for:
 
-- Public IPv4 and IPv6 addresses.
+- Public IPv4 and optional IPv6 addresses. Leave IPv6 blank on an IPv4-only VPS.
 - The domain or IP Telegram clients should use. The detected IPv4 is the default.
 - Public TCP port, default `1443`.
 - Optional `*.workers.dev` Cloudflare Worker domain.
 
-For unattended values, pass `TG_WS_PROXY_PUBLIC_IPV4`, `TG_WS_PROXY_IPV6`, `TG_WS_PROXY_PUBLIC_HOST`, `TG_WS_PROXY_PORT`, and optionally `TG_WS_PROXY_CF_WORKER` through `sudo`. Use `sudo TG_WS_PROXY_VERSION=v1.8.1 ./install.sh` to install a specific stable release instead of resolving `latest`.
+For unattended values, pass `TG_WS_PROXY_PUBLIC_IPV4`, `TG_WS_PROXY_PUBLIC_HOST`, `TG_WS_PROXY_PORT`, and optionally `TG_WS_PROXY_IPV6` and `TG_WS_PROXY_CF_WORKER` through `sudo`. Use `sudo TG_WS_PROXY_VERSION=v1.8.1 ./install.sh` to install a specific stable release instead of resolving `latest`.
 
 Installation builds the selected immutable release locally as `vpsfiles/tg-ws-proxy:<version>`. It does not run an image published by an unrelated registry account. The generated client link is printed and stored root-only in `/etc/tg-ws-proxy/client.txt`.
 
@@ -70,7 +70,7 @@ The containers use `restart: unless-stopped`, read-only filesystems, no Linux ca
 
 The installer always writes `/etc/tg-ws-proxy/cf-worker.js`. It is based on upstream's Worker but closes its open-relay behavior by allowing only:
 
-- Requests whose `CF-Connecting-IP` equals this VPS's detected public IPv4 or IPv6.
+- Requests whose `CF-Connecting-IP` equals this VPS's public IPv4 or its configured IPv6.
 - tg-ws-proxy's six fixed Telegram fallback DC addresses.
 - TCP destination port `443`.
 

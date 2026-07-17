@@ -33,7 +33,7 @@ restore_previous_release() {
       && tg_ws_verify_running "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" "${ipv6}" "${port}"
   else
     vps_docker_compose "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" create --force-recreate \
-      && [[ "$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}")" == "stopped" ]]
+      && [[ "$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" "${ipv6}")" == "stopped" ]]
   fi
 }
 
@@ -60,10 +60,6 @@ main() {
     || vps_die "tg-ws-proxy state is missing; run install.sh first"
   vps_docker_is_ready || vps_die "Docker Engine and Compose v2 must be working before updating tg-ws-proxy"
 
-  previous_state="$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}")"
-  [[ "${previous_state}" == "running" || "${previous_state}" == "stopped" ]] \
-    || vps_die "tg-ws-proxy containers are incomplete or have mixed running state; repair them before updating"
-
   current_image="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_IMAGE)"
   current_version="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_VERSION)"
   public_host="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_PUBLIC_HOST)"
@@ -72,6 +68,9 @@ main() {
   port="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_PORT)"
   secret="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_SECRET)"
   worker_domain="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_CF_WORKER)"
+  previous_state="$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" "${ipv6}")"
+  [[ "${previous_state}" == "running" || "${previous_state}" == "stopped" ]] \
+    || vps_die "tg-ws-proxy containers are incomplete or have mixed running state; repair them before updating"
   docker image inspect "${current_image}" >/dev/null 2>&1 || vps_die "currently configured tg-ws-proxy image is missing: ${current_image}"
 
   version="$(tg_ws_resolve_version "${TG_WS_PROXY_VERSION}")"
@@ -82,7 +81,7 @@ main() {
   image="$(tg_ws_image_ref "${version}" "${TG_WS_IMAGE_REPOSITORY}")"
 
   printf 'This will build tg-ws-proxy %s, preserve its addresses, port, secret, Worker, and UFW state,\n' "${version}"
-  printf 'then recreate both containers. Current state: %s.\n' "${previous_state}"
+  printf 'then recreate its configured containers. Current state: %s.\n' "${previous_state}"
   if ! vps_confirm "Continue with update?"; then
     printf 'Aborted before making changes.\n'
     exit 1
@@ -122,7 +121,7 @@ main() {
     fi
   else
     if ! vps_docker_compose "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" create --force-recreate \
-      || [[ "$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}")" != "stopped" ]]; then
+      || [[ "$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" "${ipv6}")" != "stopped" ]]; then
       restore_previous_release "${backup_directory}/.env" "${previous_state}" "${ipv6}" "${port}" \
         || vps_die "tg-ws-proxy update and rollback both failed; inspect the Compose project immediately"
       vps_die "tg-ws-proxy update failed; the previous stopped containers were restored"

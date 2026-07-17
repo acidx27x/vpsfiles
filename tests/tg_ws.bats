@@ -48,9 +48,20 @@ EOF
 
   run tg_ws_require_local_global_ipv6 2001:db8::10
   [ "${status}" -eq 0 ]
+  run tg_ws_require_local_global_ipv6 ""
+  [ "${status}" -eq 0 ]
   run tg_ws_require_local_global_ipv6 2001:db8::11
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"not assigned globally"* ]]
+}
+
+@test "tg-ws accepts an omitted IPv6 address but rejects a malformed configured address" {
+  run tg_ws_validate_optional_ipv6 ""
+  [ "${status}" -eq 0 ]
+
+  run tg_ws_validate_optional_ipv6 not-an-ip
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"public IPv6 address is invalid"* ]]
 }
 
 @test "latest tg-ws release resolves to an immutable stable tag" {
@@ -118,11 +129,32 @@ EOF
 
   [ "$(tg_ws_env_get "${compose_dir}/.env" TG_WS_PROXY_SECRET)" = "${secret}" ]
   [ "$(tg_ws_env_get "${compose_dir}/.env" TG_WS_PROXY_DC_IPS)" = "${TG_WS_DC_IPS_DEFAULT}" ]
+  [ "$(tg_ws_env_get "${compose_dir}/.env" COMPOSE_PROFILES)" = "ipv6" ]
   [ "$(stat -c '%a' "${compose_dir}/.env")" = "600" ]
 
   run tg_ws_client_url proxy.example.com 1443 "${secret}"
   [ "${status}" -eq 0 ]
   [ "${output}" = "tg://proxy?server=proxy.example.com&port=1443&secret=dd${secret}" ]
+}
+
+@test "tg-ws environment disables the IPv6 Compose profile when IPv6 is omitted" {
+  local compose_dir="${TEST_TMPDIR}/compose"
+  local secret="0123456789abcdef0123456789abcdef"
+
+  mkdir -p "${compose_dir}"
+  tg_ws_write_env \
+    "${compose_dir}" \
+    "vpsfiles/tg-ws-proxy:v1.8.1" \
+    "v1.8.1" \
+    "203.0.113.10" \
+    "203.0.113.10" \
+    "" \
+    "1443" \
+    "${secret}" \
+    ""
+
+  [ -z "$(tg_ws_env_get "${compose_dir}/.env" TG_WS_PROXY_IPV6)" ]
+  [ -z "$(tg_ws_env_get "${compose_dir}/.env" COMPOSE_PROFILES)" ]
 }
 
 @test "restricted Worker allows only installed VPS sources and Telegram DCs" {
@@ -141,6 +173,19 @@ EOF
   assert_file_not_contains "${worker_file}" ':VPS_IPV4:'
 }
 
+@test "restricted Worker omits an empty IPv6 source" {
+  local worker_file="${TEST_TMPDIR}/worker.js"
+
+  tg_ws_render_worker \
+    "${REPO_ROOT}/tg-ws-scripts/cf-worker.js.example" \
+    "203.0.113.10" \
+    "" > "${worker_file}"
+
+  assert_file_contains "${worker_file}" '"203.0.113.10"'
+  assert_file_not_contains "${worker_file}" ':VPS_IPV6:'
+  assert_file_not_contains "${worker_file}" $'\t"",'
+}
+
 @test "Compose template uses hardened host networking without FakeTLS or published ports" {
   local compose_file="${REPO_ROOT}/tg-ws-scripts/compose.yaml.example"
 
@@ -149,6 +194,8 @@ EOF
   assert_file_contains "${compose_file}" "read_only: true"
   assert_file_contains "${compose_file}" "no-new-privileges:true"
   assert_file_contains "${compose_file}" "--no-cfproxy"
+  assert_file_contains "${compose_file}" "profiles:"
+  assert_file_contains "${compose_file}" "- ipv6"
   assert_file_contains "${compose_file}" "TG_WS_PROXY_HOST: \"\${TG_WS_PROXY_IPV6}\""
   assert_file_not_contains "${compose_file}" "ports:"
   assert_file_not_contains "${compose_file}" "fake-tls"
@@ -215,9 +262,32 @@ EOF
   }
   mkdir -p "${TEST_TMPDIR}/compose"
 
-  run tg_ws_project_state "${TEST_TMPDIR}/compose" tg-ws-proxy
+  run tg_ws_project_state "${TEST_TMPDIR}/compose" tg-ws-proxy 2001:db8::10
   [ "${status}" -eq 0 ]
   [ "${output}" = "mixed" ]
+}
+
+@test "project state and health check require only IPv4 when IPv6 is omitted" {
+  vps_docker_compose() {
+    case "${*: -1}" in
+      proxy-ipv4) printf 'ipv4-id\n' ;;
+      proxy-ipv6) return 1 ;;
+    esac
+  }
+  docker() {
+    printf 'true\n'
+  }
+  nc() {
+    [[ "$1" == "-4" ]]
+  }
+  mkdir -p "${TEST_TMPDIR}/compose"
+
+  run tg_ws_project_state "${TEST_TMPDIR}/compose" tg-ws-proxy ""
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "running" ]
+
+  run tg_ws_verify_running "${TEST_TMPDIR}/compose" tg-ws-proxy "" 1443
+  [ "${status}" -eq 0 ]
 }
 
 @test "port preflight rejects an existing listener" {

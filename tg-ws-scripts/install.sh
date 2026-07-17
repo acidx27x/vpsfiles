@@ -52,7 +52,7 @@ collect_settings() {
 
   tg_ws_validate_version "${TG_WS_PROXY_VERSION}"
   tg_ws_validate_ipv4 "${TG_WS_PROXY_PUBLIC_IPV4}"
-  tg_ws_validate_ipv6 "${TG_WS_PROXY_IPV6}"
+  tg_ws_validate_optional_ipv6 "${TG_WS_PROXY_IPV6}"
   tg_ws_validate_public_host "${TG_WS_PROXY_PUBLIC_HOST}"
   vps_validate_port "${TG_WS_PROXY_PORT}"
   tg_ws_validate_domain "${TG_WS_PROXY_CF_WORKER}"
@@ -146,7 +146,11 @@ print_summary() {
   printf '============================================================\n\n'
   printf 'Version:             %s\n' "${version}"
   printf 'IPv4 listener:       0.0.0.0:%s\n' "${TG_WS_PROXY_PORT}"
-  printf 'IPv6 listener:       [%s]:%s\n' "${TG_WS_PROXY_IPV6}" "${TG_WS_PROXY_PORT}"
+  if [[ -n "${TG_WS_PROXY_IPV6}" ]]; then
+    printf 'IPv6 listener:       [%s]:%s\n' "${TG_WS_PROXY_IPV6}" "${TG_WS_PROXY_PORT}"
+  else
+    printf 'IPv6 listener:       not configured\n'
+  fi
   printf 'Compose directory:   %s\n' "${TG_WS_COMPOSE_DIR}"
   printf 'Cloudflare Worker:   %s\n' "${TG_WS_PROXY_CF_WORKER:-not configured}"
   printf '\nTelegram connection link:\n%s\n' "${client_url}"
@@ -174,7 +178,11 @@ main() {
   collect_settings
   printf '\nThis will install required apt packages and Docker CE if Docker is completely absent,\n'
   printf 'build tg-ws-proxy %s from its tagged source, open TCP port %s, and run\n' "${TG_WS_PROXY_VERSION}" "${TG_WS_PROXY_PORT}"
-  printf 'separate IPv4 and IPv6 host-network containers sharing one secret.\n'
+  if [[ -n "${TG_WS_PROXY_IPV6}" ]]; then
+    printf 'separate IPv4 and IPv6 host-network containers sharing one secret.\n'
+  else
+    printf 'an IPv4 host-network container.\n'
+  fi
   printf 'Existing Xray, Nginx, Telemt, and unrelated Docker resources will not be changed.\n'
   if ! vps_confirm "Continue?"; then
     printf 'Aborted before making changes.\n'

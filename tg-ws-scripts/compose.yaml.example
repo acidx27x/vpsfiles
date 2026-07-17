@@ -30,6 +30,8 @@ services:
 
   proxy-ipv6:
     <<: *proxy
+    profiles:
+      - ipv6
     environment:
       <<: *proxy-environment
       TG_WS_PROXY_HOST: "${TG_WS_PROXY_IPV6}"

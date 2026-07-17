@@ -38,9 +38,16 @@ tg_ws_validate_ipv6() {
   [[ "${address}" == *:* && "${address}" =~ ^[0-9A-Fa-f:]+$ ]] || vps_die "public IPv6 address is invalid: ${address}"
 }
 
+tg_ws_validate_optional_ipv6() {
+  local address="$1"
+
+  [[ -z "${address}" ]] || tg_ws_validate_ipv6 "${address}"
+}
+
 tg_ws_require_local_global_ipv6() {
   local address="$1"
 
+  [[ -z "${address}" ]] && return 0
   tg_ws_validate_ipv6 "${address}"
   ip -6 -o address show scope global \
     | awk -v address="${address}" '$4 == address "/128" || index($4, address "/") == 1 {found = 1} END {exit !found}' \
@@ -207,7 +214,7 @@ tg_ws_write_env() {
   tg_ws_validate_version "${version}"
   tg_ws_validate_public_host "${public_host}"
   tg_ws_validate_ipv4 "${ipv4}"
-  tg_ws_validate_ipv6 "${ipv6}"
+  tg_ws_validate_optional_ipv6 "${ipv6}"
   vps_validate_port "${port}"
   tg_ws_validate_secret "${secret}"
   tg_ws_validate_domain "${worker_domain}"
@@ -221,6 +228,7 @@ tg_ws_write_env() {
     "TG_WS_PROXY_PUBLIC_HOST=${public_host}" \
     "TG_WS_PROXY_PUBLIC_IPV4=${ipv4}" \
     "TG_WS_PROXY_IPV6=${ipv6}" \
+    "COMPOSE_PROFILES=${ipv6:+ipv6}" \
     "TG_WS_PROXY_PORT=${port}" \
     "TG_WS_PROXY_SECRET=${secret}" \
     "TG_WS_PROXY_DC_IPS='${TG_WS_DC_IPS_DEFAULT}'" \
@@ -264,11 +272,18 @@ tg_ws_render_worker() {
 
   [[ -f "${template}" ]] || vps_die "Cloudflare Worker template is missing: ${template}"
   tg_ws_validate_ipv4 "${ipv4}"
-  tg_ws_validate_ipv6 "${ipv6}"
-  sed \
-    -e "s|:VPS_IPV4:|${ipv4}|g" \
-    -e "s|:VPS_IPV6:|${ipv6}|g" \
-    "${template}"
+  tg_ws_validate_optional_ipv6 "${ipv6}"
+  if [[ -z "${ipv6}" ]]; then
+    sed \
+      -e "s|:VPS_IPV4:|${ipv4}|g" \
+      -e '/:VPS_IPV6:/d' \
+      "${template}"
+  else
+    sed \
+      -e "s|:VPS_IPV4:|${ipv4}|g" \
+      -e "s|:VPS_IPV6:|${ipv6}|g" \
+      "${template}"
+  fi
 }
 
 tg_ws_require_port_available() {
@@ -283,23 +298,35 @@ tg_ws_require_port_available() {
 tg_ws_project_state() {
   local compose_directory="$1"
   local project="$2"
+  local ipv6="$3"
   local ipv4_id=""
   local ipv6_id=""
   local ipv4_running=""
   local ipv6_running=""
 
   ipv4_id="$(vps_docker_compose "${compose_directory}" "${project}" ps --all --quiet proxy-ipv4)"
-  ipv6_id="$(vps_docker_compose "${compose_directory}" "${project}" ps --all --quiet proxy-ipv6)"
-  if [[ -z "${ipv4_id}" && -z "${ipv6_id}" ]]; then
+  if [[ -n "${ipv6}" ]]; then
+    ipv6_id="$(vps_docker_compose "${compose_directory}" "${project}" ps --all --quiet proxy-ipv6)"
+  fi
+  if [[ -z "${ipv4_id}" && ( -z "${ipv6}" || -z "${ipv6_id}" ) ]]; then
     printf 'missing\n'
     return 0
   fi
-  if [[ -z "${ipv4_id}" || -z "${ipv6_id}" ]]; then
+  if [[ -z "${ipv4_id}" || ( -n "${ipv6}" && -z "${ipv6_id}" ) ]]; then
     printf 'mixed\n'
     return 0
   fi
 
   ipv4_running="$(docker inspect --format '{{.State.Running}}' "${ipv4_id}")"
+  if [[ -z "${ipv6}" ]]; then
+    case "${ipv4_running}" in
+      true) printf 'running\n' ;;
+      false) printf 'stopped\n' ;;
+      *) printf 'mixed\n' ;;
+    esac
+    return 0
+  fi
+
   ipv6_running="$(docker inspect --format '{{.State.Running}}' "${ipv6_id}")"
   if [[ "${ipv4_running}" == "true" && "${ipv6_running}" == "true" ]]; then
     printf 'running\n'
@@ -318,10 +345,11 @@ tg_ws_verify_running() {
   local attempt=0
 
   while (( attempt < 10 )); do
-    if [[ "$(tg_ws_project_state "${compose_directory}" "${project}")" == "running" ]] \
-      && nc -4 -z -w 2 127.0.0.1 "${port}" >/dev/null 2>&1 \
-      && nc -6 -z -w 2 "${ipv6}" "${port}" >/dev/null 2>&1; then
-      return 0
+    if [[ "$(tg_ws_project_state "${compose_directory}" "${project}" "${ipv6}")" == "running" ]] \
+      && nc -4 -z -w 2 127.0.0.1 "${port}" >/dev/null 2>&1; then
+      if [[ -z "${ipv6}" ]] || nc -6 -z -w 2 "${ipv6}" "${port}" >/dev/null 2>&1; then
+        return 0
+      fi
     fi
     attempt=$((attempt + 1))
     sleep 1
