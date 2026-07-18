@@ -40,7 +40,7 @@ main() {
     "  UFW rule:           tg-ws-proxy TCP rule, only if added by this bundle" \
     "  Bundle images:      ${#image_ids[@]} labeled image(s)" \
     "  Update backups:     ${BACKUP_ROOT}" \
-    "  Script state:       port, Compose directory, firewall ownership, installed version"
+    "  Script state:       exported link, port, Compose directory, firewall ownership, installed version"
   printf '\nDocker Engine, its apt repository, daemon settings, global cache, and unrelated Docker resources will remain installed.\n\n'
   if ! vps_confirm "Continue with uninstall?"; then
     printf 'Aborted before making changes.\n'
@@ -61,6 +61,7 @@ main() {
     fi
   done
   rm -f -- \
+    "${SCRIPT_DIR}/tg-ws-link.txt" \
     "${SCRIPT_DIR}/server-port.txt" \
     "${SCRIPT_DIR}/compose-dir.txt" \
     "${SCRIPT_DIR}/firewall-rule-added.txt" \

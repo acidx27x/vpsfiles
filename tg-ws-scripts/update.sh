@@ -42,6 +42,7 @@ main() {
   local current_image=""
   local current_version=""
   local env_file="${TG_WS_COMPOSE_DIR}/.env"
+  local fake_tls_domain=""
   local image=""
   local ipv4=""
   local ipv6=""
@@ -67,6 +68,7 @@ main() {
   ipv6="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_IPV6)"
   port="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_PORT)"
   secret="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_SECRET)"
+  fake_tls_domain="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_FAKE_TLS_DOMAIN)"
   worker_domain="$(tg_ws_env_get "${env_file}" TG_WS_PROXY_CF_WORKER)"
   previous_state="$(tg_ws_project_state "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" "${ipv6}")"
   [[ "${previous_state}" == "running" || "${previous_state}" == "stopped" ]] \
@@ -80,7 +82,7 @@ main() {
   fi
   image="$(tg_ws_image_ref "${version}" "${TG_WS_IMAGE_REPOSITORY}")"
 
-  printf 'This will build tg-ws-proxy %s, preserve its addresses, port, secret, Worker, and UFW state,\n' "${version}"
+  printf 'This will build tg-ws-proxy %s, preserve its addresses, port, secret, FakeTLS, Worker, and UFW state,\n' "${version}"
   printf 'then recreate its configured containers. Current state: %s.\n' "${previous_state}"
   if ! vps_confirm "Continue with update?"; then
     printf 'Aborted before making changes.\n'
@@ -105,7 +107,8 @@ main() {
     "${ipv6}" \
     "${port}" \
     "${secret}" \
-    "${worker_domain}"
+    "${worker_domain}" \
+    "${fake_tls_domain}"
 
   if ! vps_docker_compose "${TG_WS_COMPOSE_DIR}" "${TG_WS_PROJECT}" config --quiet; then
     install -m 600 "${backup_directory}/.env" "${env_file}"

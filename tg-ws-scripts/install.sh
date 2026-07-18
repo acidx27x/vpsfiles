@@ -15,6 +15,7 @@ TG_WS_PROXY_PORT="${TG_WS_PROXY_PORT:-${TG_WS_PORT_DEFAULT}}"
 TG_WS_PROXY_PUBLIC_HOST="${TG_WS_PROXY_PUBLIC_HOST:-}"
 TG_WS_PROXY_PUBLIC_IPV4="${TG_WS_PROXY_PUBLIC_IPV4:-}"
 TG_WS_PROXY_IPV6="${TG_WS_PROXY_IPV6:-}"
+TG_WS_PROXY_FAKE_TLS_DOMAIN="${TG_WS_PROXY_FAKE_TLS_DOMAIN:-}"
 TG_WS_PROXY_CF_WORKER="${TG_WS_PROXY_CF_WORKER:-}"
 TG_WS_COMPOSE_DIR="${TG_WS_COMPOSE_DIR_DEFAULT}"
 TG_WS_PROJECT="tg-ws-proxy"
@@ -47,7 +48,9 @@ collect_settings() {
   vps_prompt TG_WS_PROXY_IPV6 "Public IPv6 address" "${TG_WS_PROXY_IPV6:-${detected_ipv6}}"
   vps_prompt TG_WS_PROXY_PUBLIC_HOST "Telegram server address (domain or IP)" "${TG_WS_PROXY_PUBLIC_HOST:-${TG_WS_PROXY_PUBLIC_IPV4}}"
   vps_prompt TG_WS_PROXY_PORT "Public tg-ws-proxy TCP port" "${TG_WS_PROXY_PORT}"
+  vps_prompt TG_WS_PROXY_FAKE_TLS_DOMAIN "FakeTLS/SNI masking domain (blank to use dd)" "${TG_WS_PROXY_FAKE_TLS_DOMAIN}"
   vps_prompt TG_WS_PROXY_CF_WORKER "Cloudflare Worker domain (blank to skip)" "${TG_WS_PROXY_CF_WORKER}"
+  TG_WS_PROXY_FAKE_TLS_DOMAIN="${TG_WS_PROXY_FAKE_TLS_DOMAIN,,}"
   TG_WS_PROXY_CF_WORKER="${TG_WS_PROXY_CF_WORKER,,}"
 
   tg_ws_validate_version "${TG_WS_PROXY_VERSION}"
@@ -55,7 +58,8 @@ collect_settings() {
   tg_ws_validate_optional_ipv6 "${TG_WS_PROXY_IPV6}"
   tg_ws_validate_public_host "${TG_WS_PROXY_PUBLIC_HOST}"
   vps_validate_port "${TG_WS_PROXY_PORT}"
-  tg_ws_validate_domain "${TG_WS_PROXY_CF_WORKER}"
+  tg_ws_validate_domain "${TG_WS_PROXY_FAKE_TLS_DOMAIN}" "FakeTLS/SNI domain"
+  tg_ws_validate_domain "${TG_WS_PROXY_CF_WORKER}" "Cloudflare Worker domain"
   [[ "${TG_WS_COMPOSE_DIR}" == /* && "${TG_WS_COMPOSE_DIR}" != "/" ]] || vps_die "tg-ws-proxy Compose directory is unsafe"
   [[ "${TG_WS_PROJECT}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || vps_die "tg-ws-proxy Compose project name is invalid"
   [[ ! -e "${TG_WS_COMPOSE_DIR}" ]] || vps_die "tg-ws-proxy is already configured; use update.sh or uninstall.sh first"
@@ -91,16 +95,22 @@ write_configuration() {
     "${TG_WS_PROXY_IPV6}" \
     "${TG_WS_PROXY_PORT}" \
     "${secret}" \
-    "${TG_WS_PROXY_CF_WORKER}"
+    "${TG_WS_PROXY_CF_WORKER}" \
+    "${TG_WS_PROXY_FAKE_TLS_DOMAIN}"
 
   temp_file="$(mktemp)"
   tg_ws_render_worker "${WORKER_TEMPLATE}" "${TG_WS_PROXY_PUBLIC_IPV4}" "${TG_WS_PROXY_IPV6}" > "${temp_file}"
   install -m 600 "${temp_file}" "${TG_WS_COMPOSE_DIR}/cf-worker.js"
   rm -f -- "${temp_file}"
 
-  client_url="$(tg_ws_client_url "${TG_WS_PROXY_PUBLIC_HOST}" "${TG_WS_PROXY_PORT}" "${secret}")"
+  client_url="$(tg_ws_client_url \
+    "${TG_WS_PROXY_PUBLIC_HOST}" \
+    "${TG_WS_PROXY_PORT}" \
+    "${secret}" \
+    "${TG_WS_PROXY_FAKE_TLS_DOMAIN}")"
   printf '%s\n' "${client_url}" > "${TG_WS_COMPOSE_DIR}/client.txt"
   chmod 600 "${TG_WS_COMPOSE_DIR}/client.txt"
+  install -m 600 "${TG_WS_COMPOSE_DIR}/client.txt" "${SCRIPT_DIR}/tg-ws-link.txt"
   printf '%s\n' "${TG_WS_PROXY_PORT}" > "${SCRIPT_DIR}/server-port.txt"
   printf '%s\n' "${TG_WS_COMPOSE_DIR}" > "${SCRIPT_DIR}/compose-dir.txt"
   printf '%s\n' "${version}" > "${SCRIPT_DIR}/installed-version.txt"
@@ -130,6 +140,7 @@ rollback_deployment() {
   fi
   vps_safe_remove_path "${TG_WS_COMPOSE_DIR}"
   rm -f -- \
+    "${SCRIPT_DIR}/tg-ws-link.txt" \
     "${SCRIPT_DIR}/server-port.txt" \
     "${SCRIPT_DIR}/compose-dir.txt" \
     "${SCRIPT_DIR}/firewall-rule-added.txt" \
@@ -152,6 +163,14 @@ print_summary() {
     printf 'IPv6 listener:       not configured\n'
   fi
   printf 'Compose directory:   %s\n' "${TG_WS_COMPOSE_DIR}"
+  printf 'Exported link:       %s/tg-ws-link.txt\n' "${SCRIPT_DIR}"
+  if [[ -n "${TG_WS_PROXY_FAKE_TLS_DOMAIN}" ]]; then
+    printf 'Transport:           FakeTLS (ee)\n'
+    printf 'FakeTLS domain:      %s\n' "${TG_WS_PROXY_FAKE_TLS_DOMAIN}"
+  else
+    printf 'Transport:           Secure (dd)\n'
+    printf 'FakeTLS domain:      not configured\n'
+  fi
   printf 'Cloudflare Worker:   %s\n' "${TG_WS_PROXY_CF_WORKER:-not configured}"
   printf '\nTelegram connection link:\n%s\n' "${client_url}"
   printf '\nContainer status:\n'
@@ -183,6 +202,11 @@ main() {
   else
     printf 'an IPv4 host-network container.\n'
   fi
+  if [[ -n "${TG_WS_PROXY_FAKE_TLS_DOMAIN}" ]]; then
+    printf 'FakeTLS (ee) will mask unrecognized TLS handshakes through %s:443.\n' "${TG_WS_PROXY_FAKE_TLS_DOMAIN}"
+  else
+    printf 'Secure transport (dd) will be used because no FakeTLS domain was configured.\n'
+  fi
   printf 'Existing Xray, Nginx, Telemt, and unrelated Docker resources will not be changed.\n'
   if ! vps_confirm "Continue?"; then
     printf 'Aborted before making changes.\n'
@@ -190,7 +214,7 @@ main() {
   fi
 
   install_packages
-  vps_require_commands curl ip jq nc openssl ss tar ufw
+  vps_require_commands curl ip jq nc od openssl ss tar tr ufw
   vps_docker_ensure_ready
   vps_require_commands docker
   tg_ws_require_local_global_ipv6 "${TG_WS_PROXY_IPV6}"

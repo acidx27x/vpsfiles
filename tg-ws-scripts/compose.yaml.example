@@ -20,6 +20,7 @@ x-proxy: &proxy
       max-file: "2"
   command:
     - --no-cfproxy
+    - "--fake-tls-domain=${TG_WS_PROXY_FAKE_TLS_DOMAIN:-}"
 
 services:
   proxy-ipv4:

@@ -67,15 +67,16 @@ tg_ws_validate_public_host() {
 
 tg_ws_validate_domain() {
   local domain="$1"
+  local description="${2:-domain}"
   local label=""
   local -a labels=()
 
   [[ -z "${domain}" ]] && return 0
-  [[ ${#domain} -le 253 && "${domain}" == *.* && "${domain}" != *. ]] || vps_die "Cloudflare Worker domain is invalid"
+  [[ ${#domain} -le 253 && "${domain}" == *.* && "${domain}" != *. ]] || vps_die "${description} is invalid"
   IFS='.' read -r -a labels <<< "${domain}"
   for label in "${labels[@]}"; do
     [[ "${label}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] \
-      || vps_die "Cloudflare Worker domain contains an invalid DNS label: ${label}"
+      || vps_die "${description} contains an invalid DNS label: ${label}"
   done
 }
 
@@ -191,7 +192,7 @@ tg_ws_validate_image() {
   if ! help_output="$(docker run --rm "${image}" --no-cfproxy --help 2>&1)"; then
     vps_die "tg-ws-proxy image failed its command-line validation"
   fi
-  for option in --host --secret --cfproxy-worker-domain --no-cfproxy; do
+  for option in --host --secret --cfproxy-worker-domain --fake-tls-domain --no-cfproxy; do
     [[ "${help_output}" == *"${option}"* ]] || vps_die "tg-ws-proxy image does not support required option: ${option}"
   done
   image_user="$(docker image inspect --format '{{.Config.User}}' "${image}")"
@@ -209,15 +210,19 @@ tg_ws_write_env() {
   local port="$7"
   local secret="$8"
   local worker_domain="$9"
+  local fake_tls_domain="${10:-}"
   local temp_file=""
 
+  worker_domain="${worker_domain,,}"
+  fake_tls_domain="${fake_tls_domain,,}"
   tg_ws_validate_version "${version}"
   tg_ws_validate_public_host "${public_host}"
   tg_ws_validate_ipv4 "${ipv4}"
   tg_ws_validate_optional_ipv6 "${ipv6}"
   vps_validate_port "${port}"
   tg_ws_validate_secret "${secret}"
-  tg_ws_validate_domain "${worker_domain}"
+  tg_ws_validate_domain "${worker_domain}" "Cloudflare Worker domain"
+  tg_ws_validate_domain "${fake_tls_domain}" "FakeTLS/SNI domain"
   [[ "${compose_directory}" == /* && "${compose_directory}" != "/" && -d "${compose_directory}" ]] \
     || vps_die "tg-ws-proxy Compose directory is missing or unsafe"
 
@@ -232,6 +237,7 @@ tg_ws_write_env() {
     "TG_WS_PROXY_PORT=${port}" \
     "TG_WS_PROXY_SECRET=${secret}" \
     "TG_WS_PROXY_DC_IPS='${TG_WS_DC_IPS_DEFAULT}'" \
+    "TG_WS_PROXY_FAKE_TLS_DOMAIN=${fake_tls_domain}" \
     "TG_WS_PROXY_CF_WORKER=${worker_domain}" > "${temp_file}"
   install -m 600 "${temp_file}" "${compose_directory}/.env"
   rm -f -- "${temp_file}"
@@ -256,13 +262,23 @@ tg_ws_client_url() {
   local public_host="$1"
   local port="$2"
   local secret="$3"
+  local fake_tls_domain="${4:-}"
+  local domain_hex=""
   local encoded_host=""
+  local transport_prefix="dd"
 
+  fake_tls_domain="${fake_tls_domain,,}"
   tg_ws_validate_public_host "${public_host}"
   vps_validate_port "${port}"
   tg_ws_validate_secret "${secret}"
+  tg_ws_validate_domain "${fake_tls_domain}" "FakeTLS/SNI domain"
   encoded_host="$(vps_url_encode "${public_host}")"
-  printf 'tg://proxy?server=%s&port=%s&secret=dd%s\n' "${encoded_host}" "${port}" "${secret,,}"
+  if [[ -n "${fake_tls_domain}" ]]; then
+    domain_hex="$(printf '%s' "${fake_tls_domain}" | LC_ALL=C od -An -v -tx1 | tr -d '[:space:]')"
+    transport_prefix="ee"
+  fi
+  printf 'tg://proxy?server=%s&port=%s&secret=%s%s%s\n' \
+    "${encoded_host}" "${port}" "${transport_prefix}" "${secret,,}" "${domain_hex}"
 }
 
 tg_ws_render_worker() {
