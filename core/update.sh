@@ -5,7 +5,7 @@ VPS_UPDATE_SH=1
 
 vps_update_packages() {
   vps_require_supported_apt_os
-  apt-get update
+  apt-get update || return 1
   DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade "$@"
 }
 

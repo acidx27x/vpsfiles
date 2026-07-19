@@ -39,6 +39,8 @@ sudo ./update.sh
 
 The updater runs `apt-get update` followed by `apt-get upgrade --with-new-pkgs`. It can install new dependencies but never removes packages, invokes `autoremove`, performs a distribution release upgrade, or reboots. A required reboot and held packages are reported for manual action.
 
+System-wide APT package versions and dependency changes cannot be automatically downgraded after a failure. Create a provider snapshot before updating when full VPS rollback is required.
+
 ## Uninstall
 
 ```bash

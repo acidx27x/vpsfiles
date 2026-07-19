@@ -29,11 +29,14 @@ main() {
   config_file="${AWG_DIR}/${iface}.conf"
   [[ -f "${config_file}" ]] || vps_die "AmneziaWG server config is missing: ${config_file}"
   service="awg-quick@${iface}"
+  awg-quick strip "${config_file}" >/dev/null || vps_die "current AmneziaWG config validation failed; update not started"
   if vps_service_is_active "${service}"; then
     was_active=1
   fi
 
   printf 'This will upgrade AmneziaWG packages and dependencies without changing server configuration, keys, clients, endpoints, UFW, or sysctl state.\n'
+  printf 'WARNING: APT package and dependency changes cannot be automatically downgraded by this updater.\n'
+  printf 'Create a provider snapshot before continuing if full rollback is required.\n'
   printf 'Active service: %s\n' "${service}"
   if ! vps_confirm "Continue with update?"; then
     printf 'Aborted before making changes.\n'
@@ -51,4 +54,6 @@ main() {
   printf 'AmneziaWG update complete.\n'
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

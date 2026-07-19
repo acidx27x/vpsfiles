@@ -191,6 +191,8 @@ EOF
   [ "$(sed -n '3p' "${apt_log}")" = "clean" ]
   [ "$(wc -l < "${apt_log}")" -eq 3 ]
   [[ "${output}" == *"held-example"* ]]
+  [[ "${output}" == *"cannot be automatically downgraded"* ]]
+  [[ "${output}" == *"provider snapshot"*"full rollback"* ]]
 }
 
 @test "existing zram configuration is detected without modifying it" {

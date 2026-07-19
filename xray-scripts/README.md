@@ -27,7 +27,7 @@ When a next hop is configured, the installer can also expose an optional no-auth
 sudo ./update.sh
 ```
 
-This uses the official XTLS install action with service-file updates disabled, without rerunning this bundle's installer or changing server configuration, REALITY identity, clients, endpoints, UFW, or sysctl state. It validates the current config with the updated binary and reapplies managed-geodata permissions when scheduled updates are configured. If validation or startup fails, it restores the prior binary and geodata.
+This uses the official XTLS install action with service-file updates disabled, without rerunning this bundle's installer or changing server configuration, REALITY identity, clients, endpoints, UFW, or sysctl state. It validates the current config with the updated binary and reapplies managed-geodata permissions when scheduled updates are configured. If the update, validation, or startup fails, automatic rollback restores the prior binary and geodata, reapplies managed-geodata permissions, and verifies that an originally active service is healthy. An originally inactive service remains stopped. If any rollback step fails, the updater reports that both the update and rollback failed instead of claiming restoration. Required packages upgraded through APT are outside this application rollback and are not automatically downgraded.
 
 The installed server config starts with an empty VLESS client list. It still contains one generated unused REALITY server shortId because Xray requires `realitySettings.shortIds` to be a non-empty list.
 

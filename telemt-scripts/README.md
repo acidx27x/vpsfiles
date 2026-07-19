@@ -24,7 +24,7 @@ sudo ./update.sh
 sudo TELEMT_VERSION=v1.2.3 ./update.sh
 ```
 
-The updater replaces only the Telemt binary and its required packages. It preserves the TOML configuration, TLS-front data, clients, endpoints, systemd unit, UFW, and sysctl state. If the service was active, it is restarted and verified; failed startup restores the prior binary.
+The updater replaces only the Telemt binary and its required packages. It preserves the TOML configuration, TLS-front data, clients, endpoints, systemd unit, UFW, and sysctl state. If binary replacement or startup fails, automatic rollback restores the prior binary and verifies that an originally active service is healthy. An originally inactive service remains stopped. If restoration or service recovery fails, the updater reports that both the update and rollback failed instead of claiming restoration. Required packages upgraded through APT are outside this application rollback and are not automatically downgraded.
 
 Defaults:
 

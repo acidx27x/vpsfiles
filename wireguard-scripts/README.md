@@ -19,7 +19,9 @@ The installer installs WireGuard packages, generates server keys, writes `/etc/w
 sudo ./update.sh
 ```
 
-This upgrades WireGuard packages without rerunning the installer or changing server configuration, keys, clients, endpoints, UFW, or sysctl state. If `wg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
+This validates the existing server configuration, then upgrades WireGuard packages without rerunning the installer or changing server configuration, keys, clients, endpoints, UFW, or sysctl state. The configuration is validated again after the package update. If `wg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
+
+APT package versions and dependency changes cannot be automatically downgraded after a failure. Create a provider snapshot before updating when full VPS rollback is required.
 
 By default the tunnel is dual-stack:
 

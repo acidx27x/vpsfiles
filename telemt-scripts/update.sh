@@ -15,6 +15,18 @@ TELEMT_VERSION="${TELEMT_VERSION:-latest}"
 # shellcheck source=telemt-scripts/telemt.sh
 . "${SCRIPT_DIR}/telemt.sh"
 
+restore_previous_telemt_update() {
+  local backup_bin="$1"
+  local bin_path="$2"
+  local service="$3"
+  local was_active="$4"
+
+  install -m 755 "${backup_bin}" "${bin_path}" || return 1
+  if [[ "${was_active}" -eq 1 ]]; then
+    vps_restart_active_service "${service}" || return 1
+  fi
+}
+
 main() {
   local config_file=""
   local service=""
@@ -53,12 +65,13 @@ main() {
   cp -a "${bin_path}" "${backup_bin}"
   telemt_download_binary "${TELEMT_VERSION}" "${new_bin}"
   if ! install -m 755 "${new_bin}" "${bin_path}"; then
-    install -m 755 "${backup_bin}" "${bin_path}" || true
+    restore_previous_telemt_update "${backup_bin}" "${bin_path}" "${service}" "${was_active}" \
+      || vps_die "Telemt update and automatic rollback both failed; inspect the service immediately"
     vps_die "Telemt binary update failed; the previous binary was restored"
   fi
   if [[ "${was_active}" -eq 1 ]] && ! vps_restart_active_service "${service}"; then
-    install -m 755 "${backup_bin}" "${bin_path}"
-    systemctl restart "${service}" || true
+    restore_previous_telemt_update "${backup_bin}" "${bin_path}" "${service}" "${was_active}" \
+      || vps_die "Telemt update and automatic rollback both failed; inspect the service immediately"
     vps_die "updated Telemt service did not become active; the previous binary was restored"
   fi
   if [[ "${was_active}" -eq 0 ]]; then
@@ -67,4 +80,6 @@ main() {
   printf 'Telemt update complete.\n'
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

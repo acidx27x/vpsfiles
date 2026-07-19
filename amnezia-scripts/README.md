@@ -21,7 +21,9 @@ The installer installs AmneziaWG packages, generates server keys, writes `/etc/a
 sudo ./update.sh
 ```
 
-This upgrades the AmneziaWG package without rerunning the installer or changing server configuration, obfuscation settings, keys, clients, endpoints, UFW, or sysctl state. If `awg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
+This validates the existing server configuration, then upgrades the AmneziaWG package without rerunning the installer or changing server configuration, obfuscation settings, keys, clients, endpoints, UFW, or sysctl state. The configuration is validated again after the package update. If `awg-quick@<saved-interface>` was active, it is restarted and verified; an inactive service remains stopped.
+
+APT package versions and dependency changes cannot be automatically downgraded after a failure. Create a provider snapshot before updating when full VPS rollback is required.
 
 By default the tunnel is dual-stack:
 

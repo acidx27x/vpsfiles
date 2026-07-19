@@ -18,6 +18,9 @@ restore_previous_xray_update() {
   local backup_dir="$1"
   local xray_bin="$2"
   local asset_dir="$3"
+  local config_file="$4"
+  local service="$5"
+  local was_active="$6"
   local asset=""
 
   install -m 755 "${backup_dir}/xray" "${xray_bin}" || return 1
@@ -26,6 +29,12 @@ restore_previous_xray_update() {
       cp -a "${backup_dir}/${asset}" "${asset_dir}/${asset}" || return 1
     fi
   done
+  if xray_config_uses_managed_geodata "${config_file}"; then
+    xray_prepare_geodata_permissions "${config_file}" "${service}" "${asset_dir}" || return 1
+  fi
+  if [[ "${was_active}" -eq 1 ]]; then
+    vps_restart_active_service "${service}" || return 1
+  fi
 }
 
 main() {
@@ -83,27 +92,15 @@ main() {
   elif ! xray run -test -config "${config_file}" >/dev/null; then
     update_failed=1
   fi
-  if [[ "${update_failed}" -eq 1 ]]; then
-    restore_previous_xray_update "${backup_dir}" "${xray_bin}" "${asset_dir}" \
-      || vps_die "Xray update failed and the previous binary or geodata could not be restored"
-    if xray_config_uses_managed_geodata "${config_file}"; then
-      xray_prepare_geodata_permissions "${config_file}" "${service}" "${asset_dir}" \
-        || vps_die "Xray update failed and scheduled-geodata permissions could not be restored"
-    fi
-    if [[ "${was_active}" -eq 1 ]]; then
-      systemctl restart "${service}" || true
-    fi
-    vps_die "Xray update or configuration validation failed; the previous binary and geodata were restored"
+  if [[ "${update_failed}" -eq 0 && "${was_active}" -eq 1 ]] \
+    && ! vps_restart_active_service "${service}"; then
+    update_failed=1
   fi
-  if [[ "${was_active}" -eq 1 ]] && ! vps_restart_active_service "${service}"; then
-    restore_previous_xray_update "${backup_dir}" "${xray_bin}" "${asset_dir}" \
-      || vps_die "Xray service failed after update and rollback could not restore the previous binary or geodata"
-    if xray_config_uses_managed_geodata "${config_file}"; then
-      xray_prepare_geodata_permissions "${config_file}" "${service}" "${asset_dir}" \
-        || vps_die "Xray service failed after update and scheduled-geodata permissions could not be restored"
-    fi
-    systemctl restart "${service}" || true
-    vps_die "updated Xray service did not become active; the previous binary and geodata were restored"
+  if [[ "${update_failed}" -eq 1 ]]; then
+    restore_previous_xray_update \
+      "${backup_dir}" "${xray_bin}" "${asset_dir}" "${config_file}" "${service}" "${was_active}" \
+      || vps_die "Xray update and automatic rollback both failed; inspect the service immediately"
+    vps_die "Xray update failed; the previous binary and geodata were restored"
   fi
   if [[ "${was_active}" -eq 0 ]]; then
     printf 'Xray service was inactive; it was left stopped.\n'

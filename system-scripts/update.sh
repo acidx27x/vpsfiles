@@ -31,7 +31,9 @@ vps_system_update_main() {
 
   printf '%s\n' \
     'This will refresh APT metadata and safely upgrade installed packages.' \
-    'New dependencies may be installed, but packages will not be removed and the VPS will not reboot.'
+    'New dependencies may be installed, but packages will not be removed and the VPS will not reboot.' \
+    'WARNING: APT package and dependency changes cannot be automatically downgraded by this updater.' \
+    'Create a provider snapshot before continuing if full rollback is required.'
   if ! vps_confirm "Continue with system update?"; then
     printf 'Aborted before making changes.\n'
     return 1
