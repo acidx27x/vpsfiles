@@ -111,6 +111,8 @@ nginx_uninstall_remove_state() {
 
   for state_file in \
     fallback-domain.txt \
+    reality-target.txt \
+    reality-server-name.txt \
     nginx-config-path.txt \
     nginx-enabled-config-path.txt \
     nginx-web-root-path.txt \

@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031 # Bats test cases run in isolated subshells.
 
 load test_helper
 
@@ -58,6 +59,8 @@ EOF
   printf 'renewal\n' > "${NGINX_LETSENCRYPT_ROOT}/renewal/ru.example.com.conf"
   printf 'backup\n' > "${BACKUP_ROOT}/site-config"
   printf 'ru.example.com\n' > "${NGINX_STATE_DIR}/fallback-domain.txt"
+  printf '127.0.0.1:8443\n' > "${NGINX_STATE_DIR}/reality-target.txt"
+  printf 'ru.example.com\n' > "${NGINX_STATE_DIR}/reality-server-name.txt"
   printf '%s\n' "${NGINX_CONFIG}" > "${NGINX_STATE_DIR}/nginx-config-path.txt"
   printf '%s\n' "${NGINX_ENABLED_CONFIG}" > "${NGINX_STATE_DIR}/nginx-enabled-config-path.txt"
   printf '%s\n' "${NGINX_WEB_ROOT}" > "${NGINX_STATE_DIR}/nginx-web-root-path.txt"
@@ -291,4 +294,21 @@ EOF
 
   setup_firewall
   [ "$(<"${installer_state}/firewall-rule-added.txt")" = "1" ]
+}
+
+@test "nginx installer saves Xray REALITY handoff values privately" {
+  local installer_state="${TEST_TMPDIR}/installer-state"
+
+  export NGINX_STATE_DIR="${installer_state}"
+  export NGINX_DOMAIN="xbubax.us"
+  export NGINX_INTERNAL_PORT="8443"
+  # shellcheck source=nginx-scripts/install.sh
+  . "${BATS_TEST_DIRNAME}/../nginx-scripts/install.sh"
+
+  write_script_state
+
+  [ "$(<"${installer_state}/reality-target.txt")" = "127.0.0.1:8443" ]
+  [ "$(<"${installer_state}/reality-server-name.txt")" = "xbubax.us" ]
+  [ "$(stat -c '%a' "${installer_state}/reality-target.txt")" = "600" ]
+  [ "$(stat -c '%a' "${installer_state}/reality-server-name.txt")" = "600" ]
 }

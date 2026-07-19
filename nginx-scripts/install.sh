@@ -86,6 +86,8 @@ backup_managed_files() {
 write_script_state() {
   install -d -m 755 "${NGINX_STATE_DIR}"
   printf '%s\n' "${NGINX_DOMAIN}" > "${NGINX_STATE_DIR}/fallback-domain.txt"
+  printf '127.0.0.1:%s\n' "${NGINX_INTERNAL_PORT}" > "${NGINX_STATE_DIR}/reality-target.txt"
+  printf '%s\n' "${NGINX_DOMAIN}" > "${NGINX_STATE_DIR}/reality-server-name.txt"
   printf '%s\n' "${NGINX_CONFIG}" > "${NGINX_STATE_DIR}/nginx-config-path.txt"
   printf '%s\n' "${NGINX_ENABLED_CONFIG}" > "${NGINX_STATE_DIR}/nginx-enabled-config-path.txt"
   printf '%s\n' "${NGINX_WEB_ROOT}" > "${NGINX_STATE_DIR}/nginx-web-root-path.txt"
@@ -93,6 +95,8 @@ write_script_state() {
   printf '80\n' > "${NGINX_STATE_DIR}/server-port.txt"
   chmod 600 \
     "${NGINX_STATE_DIR}/fallback-domain.txt" \
+    "${NGINX_STATE_DIR}/reality-target.txt" \
+    "${NGINX_STATE_DIR}/reality-server-name.txt" \
     "${NGINX_STATE_DIR}/nginx-config-path.txt" \
     "${NGINX_STATE_DIR}/nginx-enabled-config-path.txt" \
     "${NGINX_STATE_DIR}/nginx-web-root-path.txt" \

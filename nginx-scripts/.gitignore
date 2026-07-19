@@ -1,6 +1,8 @@
 install-backups/
 /fallback-domain.txt
 /firewall-rule-added.txt
+/reality-target.txt
+/reality-server-name.txt
 /nginx-config-path.txt
 /nginx-enabled-config-path.txt
 /nginx-renewal-hook-path.txt

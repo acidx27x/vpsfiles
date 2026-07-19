@@ -13,7 +13,7 @@ cd nginx-scripts
 sudo ./install.sh
 ```
 
-The installer prints the local REALITY target and SNI values to enter when running `../xray-scripts/install.sh`.
+The installer prints the local REALITY target and SNI values to enter when running `../xray-scripts/install.sh`. It also saves them in `reality-target.txt` and `reality-server-name.txt`.
 
 Certbot checks renewal automatically through `certbot.timer`. After a successful renewal, the installed deploy hook validates the Nginx configuration and reloads Nginx so the renewed certificate becomes active.
 
