@@ -118,83 +118,61 @@ EOF
 @test "xray server template remains a direct exit by default" {
   run jq -e '([.outbounds[].tag] | index("next-hop")) == null
     and ([.routing.rules[].outboundTag] | index("next-hop")) == null
-    and ([.inbounds[].tag] | index("shadowsocks-2022")) == null
+    and ([.inbounds[].tag] | index("local-socks")) == null
     and .outbounds[0].tag == "direct"' "${REPO_ROOT}/xray-scripts/config-server.example.json"
 
   [ "${status}" -eq 0 ]
 }
 
-@test "xray renders the optional Shadowsocks 2022 inbound" {
-  local rendered="${TEST_TMPDIR}/shadowsocks.json"
-  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+@test "xray renders a loopback-only SOCKS5 inbound routed through next hop" {
+  local rendered="${TEST_TMPDIR}/local-socks.json"
 
-  xray_render_shadowsocks_inbound "${XRAY_CONFIG}" "${rendered}" 8388 "${key}"
+  xray_test_enable_next_hop
+  xray_render_local_socks_config "${XRAY_CONFIG}" "${rendered}" 1080
 
-  jq -e --arg key "${key}" '.inbounds[] | select(
-    .tag == "shadowsocks-2022"
-    and .listen == "::"
-    and .port == 8388
-    and .protocol == "shadowsocks"
-    and .settings.network == "tcp,udp"
-    and .settings.method == "2022-blake3-aes-256-gcm"
-    and .settings.password == $key
+  jq -e '.inbounds[] | select(
+    .tag == "local-socks"
+    and .listen == "127.0.0.1"
+    and .port == 1080
+    and .protocol == "socks"
+    and .settings.auth == "noauth"
+    and .settings.udp == false
+    and (.settings.users | not)
+  )' "${rendered}" >/dev/null
+  jq -e '.routing.rules[2] | select(
+    .ruleTag == "local-socks-next-hop"
+    and .inboundTag == ["local-socks"]
+    and .outboundTag == "next-hop"
   )' "${rendered}" >/dev/null
   [ "$(jq '[.inbounds[] | select(.tag == "vless-reality-vision-443")] | length' "${rendered}")" -eq 1 ]
-  [ "$(jq '.outbounds | length' "${rendered}")" -eq 2 ]
-  [ "$(jq '.routing.rules | length' "${rendered}")" -eq 2 ]
+  [ "$(jq '[.outbounds[] | select(.tag == "next-hop")] | length' "${rendered}")" -eq 1 ]
+  [ "$(jq -r '.routing.rules[0].outboundTag' "${rendered}")" = "block" ]
+  [ "$(jq -r '.routing.rules[1].outboundTag' "${rendered}")" = "block" ]
 }
 
-@test "xray writes a private Telemt-compatible Shadowsocks URI" {
-  local key="3SYJ/f8nmVuzKvKglykRQDSgg10e/ADilkdRWrrY9HU="
-  local artifact=""
+@test "xray local SOCKS5 requires next hop and a separate port" {
+  local rendered="${TEST_TMPDIR}/local-socks.json"
 
-  CLIENTS_DIR="${TEST_TMPDIR}/clients"
-  artifact="$(xray_write_shadowsocks_artifact "2001:db8::20" 8388 "${key}")"
-
-  [ "${artifact}" = "${CLIENTS_DIR}/ss/shadowsocks-upstream.txt" ]
-  [ "$(<"${artifact}")" = "ss://2022-blake3-aes-256-gcm:3SYJ%2Ff8nmVuzKvKglykRQDSgg10e%2FADilkdRWrrY9HU%3D@[2001:db8::20]:8388" ]
-  [ "$(stat -c '%a' "${CLIENTS_DIR}/ss")" = "700" ]
-  [ "$(stat -c '%a' "${artifact}")" = "600" ]
-}
-
-@test "xray rejects unsafe Shadowsocks endpoints and an occupied ss artifact directory" {
-  CLIENTS_DIR="${TEST_TMPDIR}/clients"
-
-  run xray_validate_shadowsocks_endpoint 'https://exit.example.com'
+  run xray_render_local_socks_config "${XRAY_CONFIG}" "${rendered}" 1080
   [ "${status}" -ne 0 ]
-  [[ "${output}" == *"host name, IPv4, or IPv6"* ]]
+  [[ "${output}" == *"next-hop outbound is missing"* ]]
 
-  mkdir -p "${CLIENTS_DIR}/ss"
-  printf 'existing client\n' > "${CLIENTS_DIR}/ss/ss.uuid"
-  run xray_require_shadowsocks_artifact_path "${CLIENTS_DIR}"
+  run xray_validate_local_socks_port 443 443
   [ "${status}" -ne 0 ]
-  [[ "${output}" == *"reserved Shadowsocks artifact directory"* ]]
-}
+  [[ "${output}" == *"must differ from the Xray VLESS port"* ]]
 
-@test "xray generates a 32-byte Shadowsocks key and rejects a VLESS port collision" {
-  local key=""
-
-  key="$(xray_generate_shadowsocks_key)"
-  xray_validate_shadowsocks_key "${key}"
-  [ "$(printf '%s' "${key}" | base64 --decode | wc -c | tr -d '[:space:]')" = "32" ]
-
-  run xray_validate_shadowsocks_port 443 443
-  [ "${status}" -ne 0 ]
-  [[ "${output}" == *"must differ"* ]]
-
-  run xray_validate_shadowsocks_port 8388 443
+  run xray_validate_local_socks_port 1080 443
   [ "${status}" -eq 0 ]
 }
 
-@test "xray installer and uninstaller own Shadowsocks firewall state" {
+@test "xray keeps local SOCKS5 optional and off the firewall" {
   local install_script="${REPO_ROOT}/xray-scripts/install.sh"
   local uninstall_script="${REPO_ROOT}/xray-scripts/uninstall.sh"
 
-  assert_file_contains "${install_script}" "vps_ufw_allow \"\${XRAY_SS_PORT}\" \"tcp\""
-  assert_file_contains "${install_script}" "vps_ufw_allow \"\${XRAY_SS_PORT}\" \"udp\""
-  assert_file_contains "${install_script}" "\"\${SCRIPT_DIR}/shadowsocks-port.txt\""
-  assert_file_contains "${uninstall_script}" "vps_ufw_delete_saved_rule \"\${SCRIPT_DIR}/shadowsocks-port.txt\" \"tcp\""
-  assert_file_contains "${uninstall_script}" "vps_ufw_delete_saved_rule \"\${SCRIPT_DIR}/shadowsocks-port.txt\" \"udp\""
+  assert_file_contains "${install_script}" "XRAY_LOCAL_SOCKS_PORT=\"\${XRAY_LOCAL_SOCKS_PORT:-}\""
+  assert_file_contains "${install_script}" "prompt XRAY_LOCAL_SOCKS_PORT"
+  assert_file_not_contains "${install_script}" "vps_ufw_allow \"\${XRAY_LOCAL_SOCKS_PORT}\""
+  assert_file_not_contains "${uninstall_script}" "local-socks"
 }
 
 @test "xray parses generated VLESS REALITY next-hop URI" {
@@ -353,9 +331,12 @@ EOF
 }
 
 @test "xray removal cleans the managed route without changing other rules" {
+  local local_socks_config="${TEST_TMPDIR}/local-socks.json"
   local rules_before="${TEST_TMPDIR}/rules-before.json"
 
   xray_test_enable_next_hop
+  xray_render_local_socks_config "${XRAY_CONFIG}" "${local_socks_config}" 1080
+  mv "${local_socks_config}" "${XRAY_CONFIG}"
   jq -S '[.routing.rules[] | select(.ruleTag != "client-next-hop")]' "${XRAY_CONFIG}" > "${rules_before}"
   xray_add_client_to_config "${XRAY_CONFIG}" "phone" "uuid-phone" "sid-phone" "xray" "next-hop"
   xray_add_client_to_config "${XRAY_CONFIG}" "tablet" "uuid-tablet" "sid-tablet" "xray" "next-hop"

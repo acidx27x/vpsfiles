@@ -4,86 +4,36 @@
 VPS_TELEMT_SH=1
 
 TELEMT_CLIENTS_DIR_DEFAULT="${SCRIPT_DIR}/clients"
-TELEMT_SS_METHOD="2022-blake3-aes-256-gcm"
 
-TELEMT_SS_UPSTREAM_ADDRESS="${TELEMT_SS_UPSTREAM_ADDRESS:-}"
-TELEMT_SS_UPSTREAM_PORT="${TELEMT_SS_UPSTREAM_PORT:-}"
-TELEMT_SS_UPSTREAM_URI="${TELEMT_SS_UPSTREAM_URI:-}"
+telemt_validate_local_socks_port() {
+  local socks_port="$1"
+  local telemt_port="$2"
 
-telemt_parse_shadowsocks_upstream_uri() {
-  local uri="$1"
-  local prefix="ss://${TELEMT_SS_METHOD}:"
-  local payload=""
-  local key=""
-  local uri_key=""
-  local endpoint=""
-  local address=""
-  local port=""
-  local remainder=""
-  local decoded_length=""
-
-  TELEMT_SS_UPSTREAM_ADDRESS=""
-  TELEMT_SS_UPSTREAM_PORT=""
-  TELEMT_SS_UPSTREAM_URI=""
-
-  [[ "${uri}" == "${prefix}"* ]] \
-    || vps_die "Shadowsocks upstream URI must use ${TELEMT_SS_METHOD}"
-  payload="${uri#"${prefix}"}"
-  [[ "${payload}" == *@* ]] || vps_die "Shadowsocks upstream URI is missing its endpoint"
-  key="${payload%%@*}"
-  endpoint="${payload#*@}"
-  [[ -n "${key}" && -n "${endpoint}" && "${endpoint}" != *@* ]] \
-    || vps_die "Shadowsocks upstream URI is malformed"
-  key="${key//%2B/+}"
-  key="${key//%2b/+}"
-  key="${key//%2F//}"
-  key="${key//%2f//}"
-  key="${key//%3D/=}"
-  key="${key//%3d/=}"
-  [[ "${key}" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
-    || vps_die "Shadowsocks upstream URI must contain a 32-byte base64 key"
-  if ! decoded_length="$(printf '%s' "${key}" | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')"; then
-    vps_die "Shadowsocks upstream URI contains invalid base64"
-  fi
-  [[ "${decoded_length}" == "32" ]] \
-    || vps_die "Shadowsocks upstream URI must contain a 32-byte base64 key"
-
-  if [[ "${endpoint}" == \[* ]]; then
-    [[ "${endpoint}" == *\]:* ]] || vps_die "Shadowsocks upstream IPv6 endpoint must use [address]:port"
-    address="${endpoint#\[}"
-    address="${address%%\]*}"
-    remainder="${endpoint#*\]}"
-    [[ "${remainder}" == :* ]] || vps_die "Shadowsocks upstream IPv6 endpoint is missing a port"
-    port="${remainder#:}"
-    [[ "${address}" =~ ^[0-9A-Fa-f:.]+$ ]] \
-      || vps_die "Shadowsocks upstream IPv6 address is invalid"
-  else
-    [[ "${endpoint}" == *:* ]] || vps_die "Shadowsocks upstream endpoint is missing a port"
-    address="${endpoint%:*}"
-    port="${endpoint##*:}"
-    [[ "${address}" != *:* ]] || vps_die "Shadowsocks upstream IPv6 endpoint must be enclosed in brackets"
-    [[ "${address}" =~ ^[A-Za-z0-9._-]+$ ]] \
-      || vps_die "Shadowsocks upstream host is invalid"
-  fi
-
-  [[ -n "${address}" ]] || vps_die "Shadowsocks upstream host is empty"
-  vps_validate_port "${port}"
-  TELEMT_SS_UPSTREAM_ADDRESS="${address}"
-  TELEMT_SS_UPSTREAM_PORT="${port}"
-  uri_key="${key//+/%2B}"
-  uri_key="${uri_key//\//%2F}"
-  uri_key="${uri_key//=/%3D}"
-  TELEMT_SS_UPSTREAM_URI="ss://${TELEMT_SS_METHOD}:${uri_key}@$(vps_format_uri_host "${address}"):${port}"
+  vps_validate_port "${socks_port}"
+  vps_validate_port "${telemt_port}"
+  (( 10#${socks_port} != 10#${telemt_port} )) \
+    || vps_die "local SOCKS5 port must differ from the Telemt TCP port"
 }
 
-telemt_append_shadowsocks_upstream() {
-  local config_file="$1"
-  local uri="$2"
+telemt_require_local_socks_listener() {
+  local port="$1"
 
-  [[ -n "${uri}" ]] || return 0
-  telemt_parse_shadowsocks_upstream_uri "${uri}"
-  printf '\n[[upstreams]]\ntype = "shadowsocks"\nurl = "%s"\nweight = 1\nenabled = true\n' \
-    "${TELEMT_SS_UPSTREAM_URI}" >> "${config_file}"
+  vps_validate_port "${port}"
+  command -v timeout >/dev/null 2>&1 || vps_die "timeout is required to check the local SOCKS5 listener"
+  # shellcheck disable=SC2016 # The inner Bash expands its positional parameter.
+  if ! timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/$1' _ "${port}" 2>/dev/null; then
+    vps_die "local Xray SOCKS5 listener is unavailable at 127.0.0.1:${port}; check: sudo systemctl status xray"
+  fi
+}
+
+telemt_append_local_socks_upstream() {
+  local config_file="$1"
+  local port="$2"
+
+  [[ -n "${port}" ]] || return 0
+  vps_validate_port "${port}"
+  printf '\n[[upstreams]]\ntype = "socks5"\naddress = "127.0.0.1:%s"\nweight = 1\nenabled = true\n' \
+    "${port}" >> "${config_file}"
 }
 
 telemt_validate_version() {

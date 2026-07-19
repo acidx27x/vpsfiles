@@ -49,7 +49,7 @@ sudo ./set-client-route.sh --next-hop phone
 
 Direct routing remains the default. See `xray-scripts/README.md` for mixed direct and next-hop setup details.
 
-Xray can also generate an optional Shadowsocks 2022 endpoint during installation. Its private URI can be pasted into the optional Telemt installer prompt to build `Telegram -> Telemt entry VPS -> Xray exit VPS -> Telegram DC` without adding a separate Shadowsocks service. See the Xray and Telemt bundle READMEs for the VPS2-first workflow.
+Xray can also expose an optional SOCKS5 listener on `127.0.0.1` and route it through its VLESS next hop. Telemt on the same entry VPS can use that listener to build `Telegram -> Telemt/Xray entry VPS -> Xray exit VPS -> Telegram DC`. See the Xray and Telemt bundle READMEs for the VPS2-first workflow.
 
 Protocol-neutral implementation lives in `core/`. Protocol behavior lives beside each executable bundle: WireGuard helpers are shared from `wireguard-scripts/`, and AmneziaWG adds its obfuscation-specific behavior from `amnezia-scripts/`. Xray and Telemt helpers stay in their own script directories.
 

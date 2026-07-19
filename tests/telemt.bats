@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# shellcheck disable=SC2030,SC2031 # Bats test cases run in isolated subshells.
 
 load test_helper
 
@@ -91,65 +92,58 @@ EOF
   [ ! -e "${CLIENTS_DIR}/phone/telemt-phone-qrcode.txt" ]
 }
 
-@test "telemt parses canonical Shadowsocks upstream URIs" {
-  local key="UZP5LS5McIBplREbAnHWBu2KVY+8xsdV6zerIV5IqdU="
-  local encoded_key="UZP5LS5McIBplREbAnHWBu2KVY%2B8xsdV6zerIV5IqdU%3D"
-
-  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
-  [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "exit.example.com" ]
-  [ "${TELEMT_SS_UPSTREAM_PORT}" = "8388" ]
-  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${encoded_key}@exit.example.com:8388" ]
-
-  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${encoded_key}@[2001:db8::20]:8443"
-  [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "2001:db8::20" ]
-  [ "${TELEMT_SS_UPSTREAM_PORT}" = "8443" ]
-  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${encoded_key}@[2001:db8::20]:8443" ]
-}
-
-@test "telemt rejects incompatible or malformed Shadowsocks upstream URIs" {
-  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-  local uri=""
-
-  for uri in \
-    "ss://aes-256-gcm:${key}@exit.example.com:8388" \
-    "ss://2022-blake3-aes-256-gcm:short@exit.example.com:8388" \
-    "ss://2022-blake3-aes-256-gcm:${key}@2001:db8::20:8388" \
-    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:0" \
-    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388#name" \
-    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388?plugin=x" \
-    "ss://2022-blake3-aes-256-gcm:${key}@exit\".example.com:8388"; do
-    run telemt_parse_shadowsocks_upstream_uri "${uri}"
-    [ "${status}" -ne 0 ]
-  done
-}
-
-@test "telemt appends exactly one optional Shadowsocks upstream" {
-  local key="3SYJ/f8nmVuzKvKglykRQDSgg10e/ADilkdRWrrY9HU="
-  local encoded_key="3SYJ%2Ff8nmVuzKvKglykRQDSgg10e%2FADilkdRWrrY9HU%3D"
-  local uri="ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
+@test "telemt appends exactly one optional local SOCKS5 upstream" {
   local direct_config="${TEST_TMPDIR}/direct.toml"
   local upstream_config="${TEST_TMPDIR}/upstream.toml"
 
   printf '[general]\nuse_middle_proxy = false\n' > "${direct_config}"
   cp "${direct_config}" "${upstream_config}"
 
-  telemt_append_shadowsocks_upstream "${direct_config}" ""
+  telemt_append_local_socks_upstream "${direct_config}" ""
   [ "$(<"${direct_config}")" = $'[general]\nuse_middle_proxy = false' ]
 
-  telemt_append_shadowsocks_upstream "${upstream_config}" "${uri}"
+  telemt_append_local_socks_upstream "${upstream_config}" 1080
   [ "$(grep -cF '[[upstreams]]' "${upstream_config}")" -eq 1 ]
-  assert_file_contains "${upstream_config}" 'type = "shadowsocks"'
-  assert_file_contains "${upstream_config}" "url = \"ss://2022-blake3-aes-256-gcm:${encoded_key}@exit.example.com:8388\""
+  assert_file_contains "${upstream_config}" 'type = "socks5"'
+  assert_file_contains "${upstream_config}" 'address = "127.0.0.1:1080"'
+  assert_file_not_contains "${upstream_config}" 'username ='
+  assert_file_not_contains "${upstream_config}" 'password ='
   assert_file_contains "${upstream_config}" 'weight = 1'
   assert_file_contains "${upstream_config}" 'enabled = true'
 }
 
-@test "telemt installer keeps the upstream optional" {
+@test "telemt validates local SOCKS5 port and active listener" {
+  mkdir -p "${TEST_TMPDIR}/bin"
+  cat > "${TEST_TMPDIR}/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+exit "${TELEMT_TEST_TIMEOUT_STATUS:-0}"
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/timeout"
+  PATH="${TEST_TMPDIR}/bin:${PATH}"
+
+  run telemt_validate_local_socks_port 10443 10443
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"must differ from the Telemt TCP port"* ]]
+
+  run telemt_validate_local_socks_port 1080 10443
+  [ "${status}" -eq 0 ]
+
+  run telemt_require_local_socks_listener 1080
+  [ "${status}" -eq 0 ]
+
+  TELEMT_TEST_TIMEOUT_STATUS=124 run telemt_require_local_socks_listener 1080
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"listener is unavailable at 127.0.0.1:1080"* ]]
+  [[ "${output}" == *"systemctl status xray"* ]]
+}
+
+@test "telemt installer keeps the local SOCKS5 upstream optional" {
   local install_script="${REPO_ROOT}/telemt-scripts/install.sh"
 
-  assert_file_contains "${install_script}" "TELEMT_SS_UPSTREAM_URI=\"\${TELEMT_SS_UPSTREAM_URI:-}\""
-  assert_file_contains "${install_script}" "prompt TELEMT_SS_UPSTREAM_URI"
-  assert_file_contains "${install_script}" "telemt_append_shadowsocks_upstream \"\${tmp_file}\" \"\${TELEMT_SS_UPSTREAM_URI}\""
+  assert_file_contains "${install_script}" "TELEMT_LOCAL_SOCKS_PORT=\"\${TELEMT_LOCAL_SOCKS_PORT:-}\""
+  assert_file_contains "${install_script}" "prompt TELEMT_LOCAL_SOCKS_PORT"
+  assert_file_contains "${install_script}" "telemt_append_local_socks_upstream \"\${tmp_file}\" \"\${TELEMT_LOCAL_SOCKS_PORT}\""
+  assert_file_contains "${install_script}" "telemt_require_local_socks_listener \"\${TELEMT_LOCAL_SOCKS_PORT}\""
 }
 
 @test "telemt API readiness reports an inactive service" {

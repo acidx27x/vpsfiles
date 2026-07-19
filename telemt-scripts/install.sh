@@ -32,7 +32,7 @@ TELEMT_CONFIG="${TELEMT_CONFIG:-${TELEMT_CONFIG_DEFAULT}}"
 TELEMT_SERVICE="${TELEMT_SERVICE:-${TELEMT_SERVICE_DEFAULT}}"
 TELEMT_BIN="${TELEMT_BIN:-${TELEMT_BIN_DEFAULT}}"
 TELEMT_VERSION="${TELEMT_VERSION:-latest}"
-TELEMT_SS_UPSTREAM_URI="${TELEMT_SS_UPSTREAM_URI:-}"
+TELEMT_LOCAL_SOCKS_PORT="${TELEMT_LOCAL_SOCKS_PORT:-}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -239,7 +239,7 @@ render_server_config() {
     -e "s|:INITIAL_MAX_UNIQUE_IPS:|$(sed_escape "${TELEMT_INITIAL_MAX_UNIQUE_IPS}")|g" \
     "${SERVER_TEMPLATE}" > "${tmp_file}"
 
-  telemt_append_shadowsocks_upstream "${tmp_file}" "${TELEMT_SS_UPSTREAM_URI}"
+  telemt_append_local_socks_upstream "${tmp_file}" "${TELEMT_LOCAL_SOCKS_PORT}"
 
   install -m 640 -o telemt -g telemt "${tmp_file}" "${TELEMT_CONFIG}"
   rm -f "${tmp_file}"
@@ -328,7 +328,7 @@ collect_settings() {
   prompt TELEMT_TLS_DOMAIN "Fake-TLS/SNI masking domain" "${TELEMT_TLS_DOMAIN}"
   prompt TELEMT_MAX_CONNECTIONS "Global Telemt max_connections (0 = unlimited)" "${TELEMT_MAX_CONNECTIONS}"
   validate_non_negative_int "max_connections" "${TELEMT_MAX_CONNECTIONS}"
-  prompt TELEMT_SS_UPSTREAM_URI "Shadowsocks upstream URI from Xray (leave empty for direct)" "${TELEMT_SS_UPSTREAM_URI}"
+  prompt TELEMT_LOCAL_SOCKS_PORT "Local Xray SOCKS5 port (leave empty for direct)" "${TELEMT_LOCAL_SOCKS_PORT}"
   prompt TELEMT_INITIAL_CLIENT "Initial Telemt client name" "${TELEMT_INITIAL_CLIENT}"
   validate_client_name "${TELEMT_INITIAL_CLIENT}"
   prompt TELEMT_INITIAL_MAX_UNIQUE_IPS "Initial client max simultaneous unique IPs" "${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
@@ -336,8 +336,9 @@ collect_settings() {
 
   [[ -n "${TELEMT_PUBLIC_HOST}" ]] || die "public host cannot be empty"
   [[ -n "${TELEMT_TLS_DOMAIN}" ]] || die "TLS domain cannot be empty"
-  if [[ -n "${TELEMT_SS_UPSTREAM_URI}" ]]; then
-    telemt_parse_shadowsocks_upstream_uri "${TELEMT_SS_UPSTREAM_URI}"
+  if [[ -n "${TELEMT_LOCAL_SOCKS_PORT}" ]]; then
+    telemt_validate_local_socks_port "${TELEMT_LOCAL_SOCKS_PORT}" "${TELEMT_PORT}"
+    telemt_require_local_socks_listener "${TELEMT_LOCAL_SOCKS_PORT}"
   fi
 }
 
@@ -354,10 +355,10 @@ print_summary() {
   echo "Public host:         ${TELEMT_PUBLIC_HOST}"
   echo "TLS masking domain:  ${TELEMT_TLS_DOMAIN}"
   echo "Max connections:     ${TELEMT_MAX_CONNECTIONS}"
-  if [[ -n "${TELEMT_SS_UPSTREAM_URI}" ]]; then
-    echo "SS upstream:         $(vps_format_endpoint "${TELEMT_SS_UPSTREAM_ADDRESS}" "${TELEMT_SS_UPSTREAM_PORT}")"
+  if [[ -n "${TELEMT_LOCAL_SOCKS_PORT}" ]]; then
+    echo "SOCKS5 upstream:     127.0.0.1:${TELEMT_LOCAL_SOCKS_PORT} (no auth)"
   else
-    echo "SS upstream:         not configured (direct)"
+    echo "SOCKS5 upstream:     not configured (direct)"
   fi
   echo "Initial client:      ${TELEMT_INITIAL_CLIENT}"
   echo
@@ -387,7 +388,7 @@ main() {
   echo
   echo "This will install packages, download Telemt ${TELEMT_VERSION} from GitHub releases,"
   echo "back up existing config if present, write ${TELEMT_CONFIG}, install a systemd"
-  echo "service, optionally configure a Shadowsocks upstream, configure UFW,"
+  echo "service, optionally configure a local SOCKS5 upstream, configure UFW,"
   echo "and start ${TELEMT_SERVICE} with an initial client."
   if ! confirm "Continue?"; then
     echo "Aborted before making changes."
