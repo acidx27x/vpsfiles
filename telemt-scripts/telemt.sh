@@ -114,7 +114,7 @@ telemt_key_exists() {
       return left
     }
     BEGIN { target = "[" table "]"; in_table = 0; found = 1 }
-    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ || /^[[:space:]]*\[\[[^][]+\]\][[:space:]]*$/ {
       current = $0
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
       in_table = (current == target)
@@ -132,7 +132,7 @@ telemt_count_keys() {
 
   awk -v table="${table}" '
     BEGIN { target = "[" table "]"; in_table = 0; count = 0 }
-    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ || /^[[:space:]]*\[\[[^][]+\]\][[:space:]]*$/ {
       current = $0
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
       in_table = (current == target)
@@ -190,7 +190,7 @@ telemt_upsert_key() {
       wrote = 0
       pending_blanks = 0
     }
-    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ || /^[[:space:]]*\[\[[^][]+\]\][[:space:]]*$/ {
       current = $0
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
       if (in_table && !wrote) {
@@ -259,7 +259,7 @@ telemt_remove_key() {
       return left
     }
     BEGIN { target = "[" table "]"; in_table = 0 }
-    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ || /^[[:space:]]*\[\[[^][]+\]\][[:space:]]*$/ {
       current = $0
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
       in_table = (current == target)

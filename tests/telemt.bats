@@ -63,6 +63,50 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "telemt table operations stop at array-of-tables headers" {
+  cat > "${TELEMT_CONFIG}" <<'EOF'
+[access.users]
+"main" = "secret"
+
+[access.user_max_unique_ips]
+"main" = 5
+
+[[upstreams]]
+type = "socks5"
+address = "127.0.0.1:1080"
+weight = 1
+enabled = true
+EOF
+
+  run telemt_count_keys "${TELEMT_CONFIG}" "access.user_max_unique_ips"
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+
+  run telemt_key_exists "${TELEMT_CONFIG}" "access.user_max_unique_ips" "enabled"
+  [ "$status" -ne 0 ]
+
+  telemt_upsert_key "${TELEMT_CONFIG}" "access.users" "test" '"test-secret"'
+  telemt_upsert_key "${TELEMT_CONFIG}" "access.user_max_unique_ips" "test" "10"
+  telemt_remove_key "${TELEMT_CONFIG}" "access.user_max_unique_ips" "enabled"
+
+  run diff -u - "${TELEMT_CONFIG}" <<'EOF'
+[access.users]
+"main" = "secret"
+"test" = "test-secret"
+
+[access.user_max_unique_ips]
+"main" = 5
+"test" = 10
+
+[[upstreams]]
+type = "socks5"
+address = "127.0.0.1:1080"
+weight = 1
+enabled = true
+EOF
+  [ "$status" -eq 0 ]
+}
+
 @test "telemt upsert creates a missing table" {
   local config="${TEST_TMPDIR}/empty.toml"
   printf '# empty\n' > "${config}"
