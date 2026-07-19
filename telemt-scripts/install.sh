@@ -78,21 +78,6 @@ prompt() {
   vps_prompt "$@"
 }
 
-prompt_private() {
-  local name="$1"
-  local label="$2"
-  local default="$3"
-  local state="empty"
-  local value=""
-
-  if [[ -n "${default}" ]]; then
-    state="configured; Enter keeps current value"
-  fi
-  read -r -s -p "${label} [${state}]: " value
-  printf '\n'
-  printf -v "${name}" '%s' "${value:-${default}}"
-}
-
 confirm() {
   vps_confirm "$@"
 }
@@ -343,7 +328,7 @@ collect_settings() {
   prompt TELEMT_TLS_DOMAIN "Fake-TLS/SNI masking domain" "${TELEMT_TLS_DOMAIN}"
   prompt TELEMT_MAX_CONNECTIONS "Global Telemt max_connections (0 = unlimited)" "${TELEMT_MAX_CONNECTIONS}"
   validate_non_negative_int "max_connections" "${TELEMT_MAX_CONNECTIONS}"
-  prompt_private TELEMT_SS_UPSTREAM_URI "Shadowsocks upstream URI from Xray (leave empty for direct)" "${TELEMT_SS_UPSTREAM_URI}"
+  prompt TELEMT_SS_UPSTREAM_URI "Shadowsocks upstream URI from Xray (leave empty for direct)" "${TELEMT_SS_UPSTREAM_URI}"
   prompt TELEMT_INITIAL_CLIENT "Initial Telemt client name" "${TELEMT_INITIAL_CLIENT}"
   validate_client_name "${TELEMT_INITIAL_CLIENT}"
   prompt TELEMT_INITIAL_MAX_UNIQUE_IPS "Initial client max simultaneous unique IPs" "${TELEMT_INITIAL_MAX_UNIQUE_IPS}"
