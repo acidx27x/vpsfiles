@@ -92,16 +92,18 @@ EOF
 }
 
 @test "telemt parses canonical Shadowsocks upstream URIs" {
-  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local key="UZP5LS5McIBplREbAnHWBu2KVY+8xsdV6zerIV5IqdU="
+  local encoded_key="UZP5LS5McIBplREbAnHWBu2KVY%2B8xsdV6zerIV5IqdU%3D"
 
   telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
   [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "exit.example.com" ]
   [ "${TELEMT_SS_UPSTREAM_PORT}" = "8388" ]
+  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${encoded_key}@exit.example.com:8388" ]
 
-  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8443"
+  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${encoded_key}@[2001:db8::20]:8443"
   [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "2001:db8::20" ]
   [ "${TELEMT_SS_UPSTREAM_PORT}" = "8443" ]
-  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8443" ]
+  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${encoded_key}@[2001:db8::20]:8443" ]
 }
 
 @test "telemt rejects incompatible or malformed Shadowsocks upstream URIs" {
@@ -122,7 +124,8 @@ EOF
 }
 
 @test "telemt appends exactly one optional Shadowsocks upstream" {
-  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local key="3SYJ/f8nmVuzKvKglykRQDSgg10e/ADilkdRWrrY9HU="
+  local encoded_key="3SYJ%2Ff8nmVuzKvKglykRQDSgg10e%2FADilkdRWrrY9HU%3D"
   local uri="ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
   local direct_config="${TEST_TMPDIR}/direct.toml"
   local upstream_config="${TEST_TMPDIR}/upstream.toml"
@@ -136,15 +139,40 @@ EOF
   telemt_append_shadowsocks_upstream "${upstream_config}" "${uri}"
   [ "$(grep -cF '[[upstreams]]' "${upstream_config}")" -eq 1 ]
   assert_file_contains "${upstream_config}" 'type = "shadowsocks"'
-  assert_file_contains "${upstream_config}" "url = \"${uri}\""
+  assert_file_contains "${upstream_config}" "url = \"ss://2022-blake3-aes-256-gcm:${encoded_key}@exit.example.com:8388\""
   assert_file_contains "${upstream_config}" 'weight = 1'
   assert_file_contains "${upstream_config}" 'enabled = true'
 }
 
-@test "telemt installer keeps the upstream optional and private" {
+@test "telemt installer keeps the upstream optional" {
   local install_script="${REPO_ROOT}/telemt-scripts/install.sh"
 
   assert_file_contains "${install_script}" "TELEMT_SS_UPSTREAM_URI=\"\${TELEMT_SS_UPSTREAM_URI:-}\""
-  assert_file_contains "${install_script}" "prompt_private TELEMT_SS_UPSTREAM_URI"
+  assert_file_contains "${install_script}" "prompt TELEMT_SS_UPSTREAM_URI"
   assert_file_contains "${install_script}" "telemt_append_shadowsocks_upstream \"\${tmp_file}\" \"\${TELEMT_SS_UPSTREAM_URI}\""
+}
+
+@test "telemt API readiness reports an inactive service" {
+  mkdir -p "${TEST_TMPDIR}/bin"
+  cat > "${TEST_TMPDIR}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+exit 7
+EOF
+  cat > "${TEST_TMPDIR}/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" != "is-active --quiet telemt" ]]
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/curl" "${TEST_TMPDIR}/bin/sleep" "${TEST_TMPDIR}/bin/systemctl"
+  PATH="${TEST_TMPDIR}/bin:${PATH}"
+  export TELEMT_SERVICE="telemt"
+
+  run telemt_fetch_client_api "main" "${TEST_TMPDIR}/api.json"
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"Telemt service telemt is not active"* ]]
+  [[ "${output}" == *"journalctl -u telemt -n 100 --no-pager"* ]]
 }

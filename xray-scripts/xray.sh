@@ -156,6 +156,7 @@ xray_write_shadowsocks_artifact() {
   local client_dir="${clients_dir}/ss"
   local artifact="${client_dir}/shadowsocks-upstream.txt"
   local uri_host=""
+  local uri_key=""
 
   xray_validate_shadowsocks_endpoint "${endpoint}"
   vps_validate_port "${port}"
@@ -165,7 +166,10 @@ xray_write_shadowsocks_artifact() {
   mkdir -p "${client_dir}"
   chmod 700 "${client_dir}"
   uri_host="$(vps_format_uri_host "${endpoint}")"
-  printf 'ss://%s:%s@%s:%s\n' "${XRAY_SS_METHOD}" "${key}" "${uri_host}" "${port}" > "${artifact}"
+  uri_key="${key//+/%2B}"
+  uri_key="${uri_key//\//%2F}"
+  uri_key="${uri_key//=/%3D}"
+  printf 'ss://%s:%s@%s:%s\n' "${XRAY_SS_METHOD}" "${uri_key}" "${uri_host}" "${port}" > "${artifact}"
   chmod 600 "${artifact}"
   printf '%s\n' "${artifact}"
 }

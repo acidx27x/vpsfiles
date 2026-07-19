@@ -15,6 +15,7 @@ telemt_parse_shadowsocks_upstream_uri() {
   local prefix="ss://${TELEMT_SS_METHOD}:"
   local payload=""
   local key=""
+  local uri_key=""
   local endpoint=""
   local address=""
   local port=""
@@ -33,6 +34,12 @@ telemt_parse_shadowsocks_upstream_uri() {
   endpoint="${payload#*@}"
   [[ -n "${key}" && -n "${endpoint}" && "${endpoint}" != *@* ]] \
     || vps_die "Shadowsocks upstream URI is malformed"
+  key="${key//%2B/+}"
+  key="${key//%2b/+}"
+  key="${key//%2F//}"
+  key="${key//%2f//}"
+  key="${key//%3D/=}"
+  key="${key//%3d/=}"
   [[ "${key}" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
     || vps_die "Shadowsocks upstream URI must contain a 32-byte base64 key"
   if ! decoded_length="$(printf '%s' "${key}" | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')"; then
@@ -63,7 +70,10 @@ telemt_parse_shadowsocks_upstream_uri() {
   vps_validate_port "${port}"
   TELEMT_SS_UPSTREAM_ADDRESS="${address}"
   TELEMT_SS_UPSTREAM_PORT="${port}"
-  TELEMT_SS_UPSTREAM_URI="ss://${TELEMT_SS_METHOD}:${key}@$(vps_format_uri_host "${address}"):${port}"
+  uri_key="${key//+/%2B}"
+  uri_key="${uri_key//\//%2F}"
+  uri_key="${uri_key//=/%3D}"
+  TELEMT_SS_UPSTREAM_URI="ss://${TELEMT_SS_METHOD}:${uri_key}@$(vps_format_uri_host "${address}"):${port}"
 }
 
 telemt_append_shadowsocks_upstream() {
@@ -333,6 +343,11 @@ telemt_fetch_client_api() {
   done
 
   rm -f "${tmp_file}"
+  if [[ -n "${TELEMT_SERVICE:-}" ]] \
+    && command -v systemctl >/dev/null 2>&1 \
+    && ! systemctl is-active --quiet "${TELEMT_SERVICE}"; then
+    vps_die "Telemt service ${TELEMT_SERVICE} is not active; inspect it with: sudo journalctl -u ${TELEMT_SERVICE} -n 100 --no-pager"
+  fi
   vps_die "could not fetch generated Telemt links for ${client_name} from ${api_url}"
 }
 

@@ -145,14 +145,14 @@ EOF
 }
 
 @test "xray writes a private Telemt-compatible Shadowsocks URI" {
-  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local key="3SYJ/f8nmVuzKvKglykRQDSgg10e/ADilkdRWrrY9HU="
   local artifact=""
 
   CLIENTS_DIR="${TEST_TMPDIR}/clients"
   artifact="$(xray_write_shadowsocks_artifact "2001:db8::20" 8388 "${key}")"
 
   [ "${artifact}" = "${CLIENTS_DIR}/ss/shadowsocks-upstream.txt" ]
-  [ "$(<"${artifact}")" = "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8388" ]
+  [ "$(<"${artifact}")" = "ss://2022-blake3-aes-256-gcm:3SYJ%2Ff8nmVuzKvKglykRQDSgg10e%2FADilkdRWrrY9HU%3D@[2001:db8::20]:8388" ]
   [ "$(stat -c '%a' "${CLIENTS_DIR}/ss")" = "700" ]
   [ "$(stat -c '%a' "${artifact}")" = "600" ]
 }
