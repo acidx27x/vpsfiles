@@ -118,9 +118,83 @@ EOF
 @test "xray server template remains a direct exit by default" {
   run jq -e '([.outbounds[].tag] | index("next-hop")) == null
     and ([.routing.rules[].outboundTag] | index("next-hop")) == null
+    and ([.inbounds[].tag] | index("shadowsocks-2022")) == null
     and .outbounds[0].tag == "direct"' "${REPO_ROOT}/xray-scripts/config-server.example.json"
 
   [ "${status}" -eq 0 ]
+}
+
+@test "xray renders the optional Shadowsocks 2022 inbound" {
+  local rendered="${TEST_TMPDIR}/shadowsocks.json"
+  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+  xray_render_shadowsocks_inbound "${XRAY_CONFIG}" "${rendered}" 8388 "${key}"
+
+  jq -e --arg key "${key}" '.inbounds[] | select(
+    .tag == "shadowsocks-2022"
+    and .listen == "::"
+    and .port == 8388
+    and .protocol == "shadowsocks"
+    and .settings.network == "tcp,udp"
+    and .settings.method == "2022-blake3-aes-256-gcm"
+    and .settings.password == $key
+  )' "${rendered}" >/dev/null
+  [ "$(jq '[.inbounds[] | select(.tag == "vless-reality-vision-443")] | length' "${rendered}")" -eq 1 ]
+  [ "$(jq '.outbounds | length' "${rendered}")" -eq 2 ]
+  [ "$(jq '.routing.rules | length' "${rendered}")" -eq 2 ]
+}
+
+@test "xray writes a private Telemt-compatible Shadowsocks URI" {
+  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local artifact=""
+
+  CLIENTS_DIR="${TEST_TMPDIR}/clients"
+  artifact="$(xray_write_shadowsocks_artifact "2001:db8::20" 8388 "${key}")"
+
+  [ "${artifact}" = "${CLIENTS_DIR}/ss/shadowsocks-upstream.txt" ]
+  [ "$(<"${artifact}")" = "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8388" ]
+  [ "$(stat -c '%a' "${CLIENTS_DIR}/ss")" = "700" ]
+  [ "$(stat -c '%a' "${artifact}")" = "600" ]
+}
+
+@test "xray rejects unsafe Shadowsocks endpoints and an occupied ss artifact directory" {
+  CLIENTS_DIR="${TEST_TMPDIR}/clients"
+
+  run xray_validate_shadowsocks_endpoint 'https://exit.example.com'
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"host name, IPv4, or IPv6"* ]]
+
+  mkdir -p "${CLIENTS_DIR}/ss"
+  printf 'existing client\n' > "${CLIENTS_DIR}/ss/ss.uuid"
+  run xray_require_shadowsocks_artifact_path "${CLIENTS_DIR}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"reserved Shadowsocks artifact directory"* ]]
+}
+
+@test "xray generates a 32-byte Shadowsocks key and rejects a VLESS port collision" {
+  local key=""
+
+  key="$(xray_generate_shadowsocks_key)"
+  xray_validate_shadowsocks_key "${key}"
+  [ "$(printf '%s' "${key}" | base64 --decode | wc -c | tr -d '[:space:]')" = "32" ]
+
+  run xray_validate_shadowsocks_port 443 443
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"must differ"* ]]
+
+  run xray_validate_shadowsocks_port 8388 443
+  [ "${status}" -eq 0 ]
+}
+
+@test "xray installer and uninstaller own Shadowsocks firewall state" {
+  local install_script="${REPO_ROOT}/xray-scripts/install.sh"
+  local uninstall_script="${REPO_ROOT}/xray-scripts/uninstall.sh"
+
+  assert_file_contains "${install_script}" "vps_ufw_allow \"\${XRAY_SS_PORT}\" \"tcp\""
+  assert_file_contains "${install_script}" "vps_ufw_allow \"\${XRAY_SS_PORT}\" \"udp\""
+  assert_file_contains "${install_script}" "\"\${SCRIPT_DIR}/shadowsocks-port.txt\""
+  assert_file_contains "${uninstall_script}" "vps_ufw_delete_saved_rule \"\${SCRIPT_DIR}/shadowsocks-port.txt\" \"tcp\""
+  assert_file_contains "${uninstall_script}" "vps_ufw_delete_saved_rule \"\${SCRIPT_DIR}/shadowsocks-port.txt\" \"udp\""
 }
 
 @test "xray parses generated VLESS REALITY next-hop URI" {

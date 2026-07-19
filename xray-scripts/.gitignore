@@ -9,5 +9,6 @@ server-endpoint.txt
 server-endpoint6.txt
 server-port.txt
 server-short-id.txt
+shadowsocks-port.txt
 xray-config-path.txt
 xray-service.txt

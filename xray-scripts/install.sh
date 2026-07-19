@@ -25,6 +25,9 @@ XRAY_SERVER_NAME="${XRAY_SERVER_NAME:-${XRAY_SERVER_NAME_DEFAULT}}"
 XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
 XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
 XRAY_NEXT_HOP_URI="${XRAY_NEXT_HOP_URI:-}"
+XRAY_SS_PORT="${XRAY_SS_PORT:-}"
+XRAY_SS_KEY=""
+XRAY_PREVIOUS_SS_PORT=""
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -120,6 +123,7 @@ backup_existing_configs() {
     "${SCRIPT_DIR}/reality-server-name.txt" \
     "${SCRIPT_DIR}/reality-private-key.txt" \
     "${SCRIPT_DIR}/reality-public-key.txt" \
+    "${SCRIPT_DIR}/shadowsocks-port.txt" \
     "${SCRIPT_DIR}/xray-config-path.txt" \
     "${SCRIPT_DIR}/xray-service.txt"; do
     if [[ -e "${path}" ]]; then
@@ -160,6 +164,7 @@ backup_existing_configs() {
     "${SCRIPT_DIR}/reality-server-name.txt" \
     "${SCRIPT_DIR}/reality-private-key.txt" \
     "${SCRIPT_DIR}/reality-public-key.txt" \
+    "${SCRIPT_DIR}/shadowsocks-port.txt" \
     "${SCRIPT_DIR}/xray-config-path.txt" \
     "${SCRIPT_DIR}/xray-service.txt"; do
     if [[ -e "${path}" ]]; then
@@ -193,9 +198,21 @@ generate_short_id() {
   openssl rand -hex 8
 }
 
+read_previous_shadowsocks_port() {
+  local state_file="${SCRIPT_DIR}/shadowsocks-port.txt"
+
+  [[ -f "${state_file}" ]] || return 0
+  XRAY_PREVIOUS_SS_PORT="$(cat "${state_file}")"
+  vps_validate_port "${XRAY_PREVIOUS_SS_PORT}"
+  if [[ -f "${CLIENTS_DIR}/ss/shadowsocks-upstream.txt" ]]; then
+    xray_require_shadowsocks_artifact_path "${CLIENTS_DIR}"
+  fi
+}
+
 render_server_config() {
   local tmp_file=""
   local next_hop_file=""
+  local shadowsocks_file=""
 
   tmp_file="$(mktemp --suffix=.json)"
   jq \
@@ -218,6 +235,12 @@ render_server_config() {
     mv "${next_hop_file}" "${tmp_file}"
   fi
 
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    shadowsocks_file="$(mktemp --suffix=.json)"
+    xray_render_shadowsocks_inbound "${tmp_file}" "${shadowsocks_file}" "${XRAY_SS_PORT}" "${XRAY_SS_KEY}"
+    mv "${shadowsocks_file}" "${tmp_file}"
+  fi
+
   xray run -test -config "${tmp_file}" >/dev/null
   install -d -m 755 "$(dirname "${XRAY_CONFIG}")"
   xray_install_config "${tmp_file}" "${XRAY_CONFIG}" "${XRAY_SERVICE}"
@@ -225,6 +248,8 @@ render_server_config() {
 }
 
 prepare_script_state() {
+  local shadowsocks_artifact="${CLIENTS_DIR}/ss/shadowsocks-upstream.txt"
+
   mkdir -p "${CLIENTS_DIR}"
 
   printf '%s\n' "${XRAY_ENDPOINT}" > "${SCRIPT_DIR}/server-endpoint.txt"
@@ -238,6 +263,17 @@ prepare_script_state() {
   printf '%s\n' "${XRAY_CONFIG}" > "${SCRIPT_DIR}/xray-config-path.txt"
   printf '%s\n' "${XRAY_SERVICE}" > "${SCRIPT_DIR}/xray-service.txt"
 
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    xray_write_shadowsocks_artifact "${XRAY_ENDPOINT}" "${XRAY_SS_PORT}" "${XRAY_SS_KEY}" >/dev/null
+    printf '%s\n' "${XRAY_SS_PORT}" > "${SCRIPT_DIR}/shadowsocks-port.txt"
+  else
+    if [[ -f "${shadowsocks_artifact}" ]]; then
+      xray_require_shadowsocks_artifact_path "${CLIENTS_DIR}"
+      vps_safe_remove_client_dir "${CLIENTS_DIR}/ss" "${CLIENTS_DIR}"
+    fi
+    vps_safe_remove_file_path "${SCRIPT_DIR}/shadowsocks-port.txt"
+  fi
+
   chmod 600 "${SCRIPT_DIR}/reality-private-key.txt" "${SCRIPT_DIR}/reality-public-key.txt"
   chmod +x \
     "${SCRIPT_DIR}/add-client.sh" \
@@ -249,7 +285,17 @@ prepare_script_state() {
 
 setup_firewall() {
   vps_ufw_allow "${XRAY_PORT}" "tcp"
-  vps_enable_ufw_if_needed "Skipped enabling UFW. The Xray TCP port was still added to UFW rules."
+  if [[ -n "${XRAY_PREVIOUS_SS_PORT}" && "${XRAY_PREVIOUS_SS_PORT}" != "${XRAY_SS_PORT}" ]]; then
+    if command -v ufw >/dev/null 2>&1; then
+      ufw delete allow "${XRAY_PREVIOUS_SS_PORT}/tcp" >/dev/null 2>&1 || true
+      ufw delete allow "${XRAY_PREVIOUS_SS_PORT}/udp" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    vps_ufw_allow "${XRAY_SS_PORT}" "tcp"
+    vps_ufw_allow "${XRAY_SS_PORT}" "udp"
+  fi
+  vps_enable_ufw_if_needed "Skipped enabling UFW. The configured Xray and Shadowsocks rules were still added to UFW."
 }
 
 start_xray() {
@@ -272,12 +318,18 @@ collect_settings() {
   prompt XRAY_TARGET "REALITY target host:port" "${XRAY_TARGET}"
   prompt XRAY_SERVER_NAME "REALITY serverName/SNI" "${XRAY_SERVER_NAME:-${default_server_name}}"
   prompt XRAY_NEXT_HOP_URI "Next-hop VLESS URI (leave empty for direct exit)" "${XRAY_NEXT_HOP_URI}"
+  prompt XRAY_SS_PORT "Shadowsocks 2022 port for Telemt upstream (leave empty to disable)" "${XRAY_SS_PORT}"
 
   [[ -n "${XRAY_ENDPOINT}" ]] || die "public endpoint cannot be empty"
   [[ -n "${XRAY_TARGET}" ]] || die "REALITY target cannot be empty"
   [[ -n "${XRAY_SERVER_NAME}" ]] || die "REALITY serverName cannot be empty"
   if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
     xray_parse_next_hop_uri "${XRAY_NEXT_HOP_URI}"
+  fi
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    xray_validate_shadowsocks_port "${XRAY_SS_PORT}" "${XRAY_PORT}"
+    xray_validate_shadowsocks_endpoint "${XRAY_ENDPOINT}"
+    xray_require_shadowsocks_artifact_path "${CLIENTS_DIR}"
   fi
 }
 
@@ -302,7 +354,13 @@ print_summary() {
     echo "Next-hop outbound: not configured"
     echo "Client routing:    direct exit"
   fi
-  echo "Clients:           none"
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    echo "Shadowsocks:       $(vps_format_endpoint "${XRAY_ENDPOINT}" "${XRAY_SS_PORT}") (TCP and UDP)"
+    echo "SS upstream URI:   ${CLIENTS_DIR}/ss/shadowsocks-upstream.txt"
+  else
+    echo "Shadowsocks:       not configured"
+  fi
+  echo "VLESS clients:     none"
   echo
   echo "Add clients with:"
   echo "  cd ${SCRIPT_DIR}"
@@ -327,11 +385,12 @@ main() {
   echo "Xray VLESS REALITY full installation"
   echo
   collect_settings
+  read_previous_shadowsocks_port
 
   echo
   echo "This will install packages, install or update Xray with the official XTLS installer,"
   echo "back up existing config if present, write ${XRAY_CONFIG}, enable BBR sysctl tuning,"
-  echo "configure UFW, and start ${XRAY_SERVICE}."
+  echo "configure UFW, optionally create a Shadowsocks 2022 endpoint, and start ${XRAY_SERVICE}."
   if ! confirm "Continue?"; then
     echo "Aborted before making changes."
     exit 1
@@ -342,6 +401,10 @@ main() {
   install_xray
   generate_reality_keys
   XRAY_SERVER_SHORT_ID="$(generate_short_id)"
+  if [[ -n "${XRAY_SS_PORT}" ]]; then
+    XRAY_SS_KEY="$(xray_generate_shadowsocks_key)"
+    xray_validate_shadowsocks_key "${XRAY_SS_KEY}"
+  fi
   render_server_config
   prepare_script_state
   enable_bbr_tuning

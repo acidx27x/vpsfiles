@@ -4,6 +4,77 @@
 VPS_TELEMT_SH=1
 
 TELEMT_CLIENTS_DIR_DEFAULT="${SCRIPT_DIR}/clients"
+TELEMT_SS_METHOD="2022-blake3-aes-256-gcm"
+
+TELEMT_SS_UPSTREAM_ADDRESS="${TELEMT_SS_UPSTREAM_ADDRESS:-}"
+TELEMT_SS_UPSTREAM_PORT="${TELEMT_SS_UPSTREAM_PORT:-}"
+TELEMT_SS_UPSTREAM_URI="${TELEMT_SS_UPSTREAM_URI:-}"
+
+telemt_parse_shadowsocks_upstream_uri() {
+  local uri="$1"
+  local prefix="ss://${TELEMT_SS_METHOD}:"
+  local payload=""
+  local key=""
+  local endpoint=""
+  local address=""
+  local port=""
+  local remainder=""
+  local decoded_length=""
+
+  TELEMT_SS_UPSTREAM_ADDRESS=""
+  TELEMT_SS_UPSTREAM_PORT=""
+  TELEMT_SS_UPSTREAM_URI=""
+
+  [[ "${uri}" == "${prefix}"* ]] \
+    || vps_die "Shadowsocks upstream URI must use ${TELEMT_SS_METHOD}"
+  payload="${uri#"${prefix}"}"
+  [[ "${payload}" == *@* ]] || vps_die "Shadowsocks upstream URI is missing its endpoint"
+  key="${payload%%@*}"
+  endpoint="${payload#*@}"
+  [[ -n "${key}" && -n "${endpoint}" && "${endpoint}" != *@* ]] \
+    || vps_die "Shadowsocks upstream URI is malformed"
+  [[ "${key}" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
+    || vps_die "Shadowsocks upstream URI must contain a 32-byte base64 key"
+  if ! decoded_length="$(printf '%s' "${key}" | base64 --decode 2>/dev/null | wc -c | tr -d '[:space:]')"; then
+    vps_die "Shadowsocks upstream URI contains invalid base64"
+  fi
+  [[ "${decoded_length}" == "32" ]] \
+    || vps_die "Shadowsocks upstream URI must contain a 32-byte base64 key"
+
+  if [[ "${endpoint}" == \[* ]]; then
+    [[ "${endpoint}" == *\]:* ]] || vps_die "Shadowsocks upstream IPv6 endpoint must use [address]:port"
+    address="${endpoint#\[}"
+    address="${address%%\]*}"
+    remainder="${endpoint#*\]}"
+    [[ "${remainder}" == :* ]] || vps_die "Shadowsocks upstream IPv6 endpoint is missing a port"
+    port="${remainder#:}"
+    [[ "${address}" =~ ^[0-9A-Fa-f:.]+$ ]] \
+      || vps_die "Shadowsocks upstream IPv6 address is invalid"
+  else
+    [[ "${endpoint}" == *:* ]] || vps_die "Shadowsocks upstream endpoint is missing a port"
+    address="${endpoint%:*}"
+    port="${endpoint##*:}"
+    [[ "${address}" != *:* ]] || vps_die "Shadowsocks upstream IPv6 endpoint must be enclosed in brackets"
+    [[ "${address}" =~ ^[A-Za-z0-9._-]+$ ]] \
+      || vps_die "Shadowsocks upstream host is invalid"
+  fi
+
+  [[ -n "${address}" ]] || vps_die "Shadowsocks upstream host is empty"
+  vps_validate_port "${port}"
+  TELEMT_SS_UPSTREAM_ADDRESS="${address}"
+  TELEMT_SS_UPSTREAM_PORT="${port}"
+  TELEMT_SS_UPSTREAM_URI="ss://${TELEMT_SS_METHOD}:${key}@$(vps_format_uri_host "${address}"):${port}"
+}
+
+telemt_append_shadowsocks_upstream() {
+  local config_file="$1"
+  local uri="$2"
+
+  [[ -n "${uri}" ]] || return 0
+  telemt_parse_shadowsocks_upstream_uri "${uri}"
+  printf '\n[[upstreams]]\ntype = "shadowsocks"\nurl = "%s"\nweight = 1\nenabled = true\n' \
+    "${TELEMT_SS_UPSTREAM_URI}" >> "${config_file}"
+}
 
 telemt_validate_version() {
   local version="$1"

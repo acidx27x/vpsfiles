@@ -34,11 +34,12 @@ main() {
     "  Install backups:   ${BACKUP_ROOT}" \
     "  Script state:      server-endpoint.txt, server-endpoint6.txt," \
     "                     server-port.txt, server-short-id.txt," \
+    "                     shadowsocks-port.txt," \
     "                     reality-target.txt, reality-server-name.txt," \
     "                     reality-private-key.txt, reality-public-key.txt," \
     "                     xray-config-path.txt, xray-service.txt" \
     "" \
-    "It will also try to remove the UFW allow rule for the saved Xray TCP port." \
+    "It will also try to remove the saved Xray TCP and Shadowsocks TCP/UDP UFW rules." \
     "It will not uninstall Xray packages or binaries."
   echo
   if ! vps_confirm "Continue with uninstall?"; then
@@ -48,12 +49,14 @@ main() {
 
   vps_systemctl_stop_disable "${service}"
   vps_ufw_delete_saved_rule "${SCRIPT_DIR}/server-port.txt" "tcp"
+  vps_ufw_delete_saved_rule "${SCRIPT_DIR}/shadowsocks-port.txt" "tcp"
+  vps_ufw_delete_saved_rule "${SCRIPT_DIR}/shadowsocks-port.txt" "udp"
   vps_safe_remove_file_path "${config_file}"
   vps_safe_remove_file_path "${SYSCTL_FILE}"
   vps_clean_clients_dir "${CLIENTS_DIR}" "${SCRIPT_DIR}/clients"
   vps_safe_remove_path "${BACKUP_ROOT}"
 
-  for state_file in server-endpoint.txt server-endpoint6.txt server-port.txt server-short-id.txt reality-target.txt reality-server-name.txt reality-private-key.txt reality-public-key.txt xray-config-path.txt xray-service.txt; do
+  for state_file in server-endpoint.txt server-endpoint6.txt server-port.txt server-short-id.txt shadowsocks-port.txt reality-target.txt reality-server-name.txt reality-private-key.txt reality-public-key.txt xray-config-path.txt xray-service.txt; do
     vps_safe_remove_file_path "${SCRIPT_DIR}/${state_file}"
   done
 

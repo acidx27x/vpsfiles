@@ -8,6 +8,8 @@ XRAY_CLIENTS_DIR_DEFAULT="${SCRIPT_DIR}/clients"
 XRAY_INSTALLER_URL="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 XRAY_NEXT_HOP_OUTBOUND_TAG="next-hop"
 XRAY_CLIENT_NEXT_HOP_RULE_TAG="client-next-hop"
+XRAY_SS_INBOUND_TAG="shadowsocks-2022"
+XRAY_SS_METHOD="2022-blake3-aes-256-gcm"
 
 XRAY_NEXT_HOP_ADDRESS=""
 XRAY_NEXT_HOP_PORT=""
@@ -63,6 +65,109 @@ xray_generate_uuid() {
 
 xray_generate_short_id() {
   openssl rand -hex 8
+}
+
+xray_generate_shadowsocks_key() {
+  openssl rand -base64 32 | tr -d '\r\n'
+}
+
+xray_validate_shadowsocks_endpoint() {
+  local endpoint="$1"
+  local address="${endpoint}"
+
+  if [[ "${address}" == \[*\] ]]; then
+    [[ "${address}" == \[*\] && "${address}" != *\]*:* ]] \
+      || vps_die "Shadowsocks endpoint must be a host name, IPv4, or IPv6 address without a port"
+    address="${address#\[}"
+    address="${address%\]}"
+  fi
+
+  if [[ "${address}" == *:* ]]; then
+    [[ "${address}" =~ ^[0-9A-Fa-f:.]+$ ]] \
+      || vps_die "Shadowsocks endpoint must be a host name, IPv4, or IPv6 address"
+  else
+    [[ "${address}" =~ ^[A-Za-z0-9._-]+$ ]] \
+      || vps_die "Shadowsocks endpoint must be a host name, IPv4, or IPv6 address"
+  fi
+}
+
+xray_validate_shadowsocks_key() {
+  local key="$1"
+
+  [[ "${key}" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
+    || vps_die "Shadowsocks 2022 key must be a 32-byte base64 value"
+}
+
+xray_validate_shadowsocks_port() {
+  local shadowsocks_port="$1"
+  local vless_port="$2"
+
+  vps_validate_port "${shadowsocks_port}"
+  vps_validate_port "${vless_port}"
+  (( 10#${shadowsocks_port} != 10#${vless_port} )) \
+    || vps_die "Shadowsocks port must differ from the Xray VLESS port"
+}
+
+xray_render_shadowsocks_inbound() {
+  local source_file="$1"
+  local output_file="$2"
+  local port="$3"
+  local key="$4"
+
+  vps_validate_port "${port}"
+  xray_validate_shadowsocks_key "${key}"
+  jq \
+    --arg tag "${XRAY_SS_INBOUND_TAG}" \
+    --arg method "${XRAY_SS_METHOD}" \
+    --arg password "${key}" \
+    --argjson port "${port}" \
+    '.inbounds += [{
+      "tag": $tag,
+      "listen": "::",
+      "port": $port,
+      "protocol": "shadowsocks",
+      "settings": {
+        "network": "tcp,udp",
+        "method": $method,
+        "password": $password
+      }
+    }]' \
+    "${source_file}" > "${output_file}"
+}
+
+xray_require_shadowsocks_artifact_path() {
+  local clients_dir="$1"
+  local client_dir="${clients_dir}/ss"
+  local artifact="${client_dir}/shadowsocks-upstream.txt"
+
+  [[ ! -e "${client_dir}" || -d "${client_dir}" ]] \
+    || vps_die "reserved Shadowsocks artifact path is not a directory: ${client_dir}"
+  if [[ -d "${client_dir}" \
+    && -n "$(find "${client_dir}" -mindepth 1 -maxdepth 1 ! -path "${artifact}" -print -quit 2>/dev/null)" ]]; then
+    vps_die "reserved Shadowsocks artifact directory is occupied: ${client_dir}"
+  fi
+}
+
+xray_write_shadowsocks_artifact() {
+  local endpoint="$1"
+  local port="$2"
+  local key="$3"
+  local clients_dir="${CLIENTS_DIR:-${XRAY_CLIENTS_DIR_DEFAULT}}"
+  local client_dir="${clients_dir}/ss"
+  local artifact="${client_dir}/shadowsocks-upstream.txt"
+  local uri_host=""
+
+  xray_validate_shadowsocks_endpoint "${endpoint}"
+  vps_validate_port "${port}"
+  xray_validate_shadowsocks_key "${key}"
+  xray_require_shadowsocks_artifact_path "${clients_dir}"
+
+  mkdir -p "${client_dir}"
+  chmod 700 "${client_dir}"
+  uri_host="$(vps_format_uri_host "${endpoint}")"
+  printf 'ss://%s:%s@%s:%s\n' "${XRAY_SS_METHOD}" "${key}" "${uri_host}" "${port}" > "${artifact}"
+  chmod 600 "${artifact}"
+  printf '%s\n' "${artifact}"
 }
 
 xray_run_installer() {

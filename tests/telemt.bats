@@ -90,3 +90,61 @@ EOF
   [ ! -e "${CLIENTS_DIR}/phone/telemt-phone-api.json" ]
   [ ! -e "${CLIENTS_DIR}/phone/telemt-phone-qrcode.txt" ]
 }
+
+@test "telemt parses canonical Shadowsocks upstream URIs" {
+  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
+  [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "exit.example.com" ]
+  [ "${TELEMT_SS_UPSTREAM_PORT}" = "8388" ]
+
+  telemt_parse_shadowsocks_upstream_uri "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8443"
+  [ "${TELEMT_SS_UPSTREAM_ADDRESS}" = "2001:db8::20" ]
+  [ "${TELEMT_SS_UPSTREAM_PORT}" = "8443" ]
+  [ "${TELEMT_SS_UPSTREAM_URI}" = "ss://2022-blake3-aes-256-gcm:${key}@[2001:db8::20]:8443" ]
+}
+
+@test "telemt rejects incompatible or malformed Shadowsocks upstream URIs" {
+  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local uri=""
+
+  for uri in \
+    "ss://aes-256-gcm:${key}@exit.example.com:8388" \
+    "ss://2022-blake3-aes-256-gcm:short@exit.example.com:8388" \
+    "ss://2022-blake3-aes-256-gcm:${key}@2001:db8::20:8388" \
+    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:0" \
+    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388#name" \
+    "ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388?plugin=x" \
+    "ss://2022-blake3-aes-256-gcm:${key}@exit\".example.com:8388"; do
+    run telemt_parse_shadowsocks_upstream_uri "${uri}"
+    [ "${status}" -ne 0 ]
+  done
+}
+
+@test "telemt appends exactly one optional Shadowsocks upstream" {
+  local key="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  local uri="ss://2022-blake3-aes-256-gcm:${key}@exit.example.com:8388"
+  local direct_config="${TEST_TMPDIR}/direct.toml"
+  local upstream_config="${TEST_TMPDIR}/upstream.toml"
+
+  printf '[general]\nuse_middle_proxy = false\n' > "${direct_config}"
+  cp "${direct_config}" "${upstream_config}"
+
+  telemt_append_shadowsocks_upstream "${direct_config}" ""
+  [ "$(<"${direct_config}")" = $'[general]\nuse_middle_proxy = false' ]
+
+  telemt_append_shadowsocks_upstream "${upstream_config}" "${uri}"
+  [ "$(grep -cF '[[upstreams]]' "${upstream_config}")" -eq 1 ]
+  assert_file_contains "${upstream_config}" 'type = "shadowsocks"'
+  assert_file_contains "${upstream_config}" "url = \"${uri}\""
+  assert_file_contains "${upstream_config}" 'weight = 1'
+  assert_file_contains "${upstream_config}" 'enabled = true'
+}
+
+@test "telemt installer keeps the upstream optional and private" {
+  local install_script="${REPO_ROOT}/telemt-scripts/install.sh"
+
+  assert_file_contains "${install_script}" "TELEMT_SS_UPSTREAM_URI=\"\${TELEMT_SS_UPSTREAM_URI:-}\""
+  assert_file_contains "${install_script}" "prompt_private TELEMT_SS_UPSTREAM_URI"
+  assert_file_contains "${install_script}" "telemt_append_shadowsocks_upstream \"\${tmp_file}\" \"\${TELEMT_SS_UPSTREAM_URI}\""
+}
