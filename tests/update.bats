@@ -106,3 +106,33 @@ EOF
   [[ "${output}" == *"run as root"* ]]
   [ ! -e "${log_file}" ]
 }
+
+@test "Xray update uses the official install action" {
+  local update_script="${REPO_ROOT}/xray-scripts/update.sh"
+
+  assert_file_contains "${update_script}" "xray_run_installer install --no-update-service"
+  assert_file_not_contains "${update_script}" "xray_run_installer update"
+}
+
+@test "Xray update rollback restores the binary and geodata" {
+  local asset_dir="${TEST_TMPDIR}/assets"
+  local backup_dir="${TEST_TMPDIR}/backup"
+  local xray_bin="${TEST_TMPDIR}/xray"
+
+  # shellcheck source=xray-scripts/update.sh
+  . "${REPO_ROOT}/xray-scripts/update.sh"
+  mkdir -p "${asset_dir}" "${backup_dir}"
+  printf 'old binary\n' > "${backup_dir}/xray"
+  printf 'old geoip\n' > "${backup_dir}/geoip.dat"
+  printf 'old geosite\n' > "${backup_dir}/geosite.dat"
+  printf 'new binary\n' > "${xray_bin}"
+  printf 'new geoip\n' > "${asset_dir}/geoip.dat"
+  printf 'new geosite\n' > "${asset_dir}/geosite.dat"
+
+  restore_previous_xray_update "${backup_dir}" "${xray_bin}" "${asset_dir}"
+
+  [ "$(<"${xray_bin}")" = "old binary" ]
+  [ "$(<"${asset_dir}/geoip.dat")" = "old geoip" ]
+  [ "$(<"${asset_dir}/geosite.dat")" = "old geosite" ]
+  [ -x "${xray_bin}" ]
+}

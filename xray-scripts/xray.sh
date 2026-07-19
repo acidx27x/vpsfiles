@@ -10,6 +10,12 @@ XRAY_NEXT_HOP_OUTBOUND_TAG="next-hop"
 XRAY_CLIENT_NEXT_HOP_RULE_TAG="client-next-hop"
 XRAY_LOCAL_SOCKS_INBOUND_TAG="local-socks"
 XRAY_LOCAL_SOCKS_RULE_TAG="local-socks-next-hop"
+XRAY_RUSSIAN_DOMAIN_RULE_TAG="russian-domain-direct"
+XRAY_RUSSIAN_IP_RULE_TAG="russian-ip-direct"
+XRAY_GEODATA_CRON="30 4 * * 5"
+XRAY_GEODATA_DIR_DEFAULT="/usr/local/share/xray"
+XRAY_GEOIP_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+XRAY_GEOSITE_URL="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
 
 XRAY_NEXT_HOP_ADDRESS=""
 XRAY_NEXT_HOP_PORT=""
@@ -36,6 +42,12 @@ xray_validate_client_route() {
   local route="$1"
 
   [[ "${route}" == "direct" || "${route}" == "next-hop" ]] || vps_die "route must be direct or next-hop: ${route}"
+}
+
+xray_validate_russian_split_routing() {
+  local enabled="$1"
+
+  [[ "${enabled}" == "0" || "${enabled}" == "1" ]] || vps_die "XRAY_RUSSIAN_SPLIT_ROUTING must be 0 or 1"
 }
 
 xray_require_next_hop_outbound() {
@@ -81,12 +93,19 @@ xray_run_installer() {
   local action="$1"
   local installer=""
 
+  shift
+
+  case "${action}" in
+    install|install-geodata) ;;
+    *) vps_die "unsupported Xray installer action: ${action}" ;;
+  esac
+
   installer="$(mktemp)"
   if ! curl -fsSL "${XRAY_INSTALLER_URL}" -o "${installer}"; then
     rm -f "${installer}"
     return 1
   fi
-  if ! bash "${installer}" "${action}"; then
+  if ! bash "${installer}" "${action}" "$@"; then
     rm -f "${installer}"
     return 1
   fi
@@ -247,6 +266,50 @@ xray_render_next_hop_config() {
     "${source_file}" > "${output_file}"
 }
 
+xray_render_russian_split_config() {
+  local source_file="$1"
+  local output_file="$2"
+  local inbound_tag=""
+
+  xray_require_next_hop_outbound "${source_file}"
+  inbound_tag="$(xray_inbound_tag)"
+  jq \
+    --arg inbound_tag "${inbound_tag}" \
+    --arg domain_rule_tag "${XRAY_RUSSIAN_DOMAIN_RULE_TAG}" \
+    --arg ip_rule_tag "${XRAY_RUSSIAN_IP_RULE_TAG}" \
+    --arg direct_tag "direct" \
+    --arg next_hop_tag "${XRAY_NEXT_HOP_OUTBOUND_TAG}" \
+    --arg cron "${XRAY_GEODATA_CRON}" \
+    --arg geoip_url "${XRAY_GEOIP_URL}" \
+    --arg geosite_url "${XRAY_GEOSITE_URL}" \
+    '.routing.domainStrategy = "IPOnDemand"
+    | .routing.rules += [
+      {
+        "ruleTag": $domain_rule_tag,
+        "type": "field",
+        "inboundTag": [$inbound_tag],
+        "domain": ["geosite:tld-ru", "geosite:category-gov-ru"],
+        "outboundTag": $direct_tag
+      },
+      {
+        "ruleTag": $ip_rule_tag,
+        "type": "field",
+        "inboundTag": [$inbound_tag],
+        "ip": ["geoip:ru"],
+        "outboundTag": $direct_tag
+      }
+    ]
+    | .geodata = {
+      "cron": $cron,
+      "outbound": $next_hop_tag,
+      "assets": [
+        {"url": $geoip_url, "file": "geoip.dat"},
+        {"url": $geosite_url, "file": "geosite.dat"}
+      ]
+    }' \
+    "${source_file}" > "${output_file}"
+}
+
 xray_render_local_socks_config() {
   local source_file="$1"
   local output_file="$2"
@@ -304,6 +367,38 @@ xray_service_user() {
     END { print user }
   ')"
   printf '%s\n' "${user:-root}"
+}
+
+xray_config_uses_managed_geodata() {
+  local config_file="$1"
+
+  jq -e '(.geodata.assets // []) | length > 0' "${config_file}" >/dev/null
+}
+
+xray_prepare_geodata_permissions() {
+  local config_file="$1"
+  local service="$2"
+  local asset_dir="${3:-${XRAY_GEODATA_DIR_DEFAULT}}"
+  local service_group=""
+  local service_user=""
+
+  xray_config_uses_managed_geodata "${config_file}" \
+    || { printf 'ERROR: scheduled Xray geodata is missing from %s\n' "${config_file}" >&2; return 1; }
+  [[ "${asset_dir}" == /* && "${asset_dir}" != "/" && -d "${asset_dir}" ]] \
+    || { printf 'ERROR: Xray geodata directory is missing or unsafe: %s\n' "${asset_dir}" >&2; return 1; }
+  [[ -f "${asset_dir}/geoip.dat" ]] \
+    || { printf 'ERROR: Xray geodata file is missing: %s/geoip.dat\n' "${asset_dir}" >&2; return 1; }
+  [[ -f "${asset_dir}/geosite.dat" ]] \
+    || { printf 'ERROR: Xray geodata file is missing: %s/geosite.dat\n' "${asset_dir}" >&2; return 1; }
+
+  service_user="$(xray_service_user "${service}")"
+  id "${service_user}" >/dev/null 2>&1 \
+    || { printf 'ERROR: Xray service user does not exist: %s\n' "${service_user}" >&2; return 1; }
+  service_group="$(id -gn "${service_user}")" || return 1
+  chown "${service_user}:${service_group}" "${asset_dir}" || return 1
+  chown "${service_user}:${service_group}" "${asset_dir}/geoip.dat" "${asset_dir}/geosite.dat" || return 1
+  chmod 700 "${asset_dir}" || return 1
+  chmod 600 "${asset_dir}/geoip.dat" "${asset_dir}/geosite.dat" || return 1
 }
 
 xray_install_config() {

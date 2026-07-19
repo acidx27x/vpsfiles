@@ -85,8 +85,43 @@ exit 22
 EOF
   chmod +x "${TEST_TMPDIR}/bin/curl"
 
+  run xray_run_installer install
+  [ "$status" -ne 0 ]
+}
+
+@test "xray installer runner forwards supported actions and rejects obsolete ones" {
+  local action_log="${TEST_TMPDIR}/installer-action.log"
+  local curl_log="${TEST_TMPDIR}/curl.log"
+
+  export action_log curl_log
+  cat > "${TEST_TMPDIR}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+output=""
+printf 'called\n' >> "${curl_log}"
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then
+    output="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+cat > "${output}" <<'INSTALLER'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "${action_log}"
+INSTALLER
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/curl"
+
+  run xray_run_installer install --no-update-service
+  [ "$status" -eq 0 ]
+  [ "$(<"${action_log}")" = "install --no-update-service" ]
+
+  rm -f "${curl_log}"
   run xray_run_installer update
   [ "$status" -ne 0 ]
+  [[ "$output" == *"unsupported Xray installer action: update"* ]]
+  [ ! -e "${curl_log}" ]
 }
 
 @test "xray add and remove client mutate target inbound" {
@@ -118,7 +153,11 @@ EOF
 @test "xray server template remains a direct exit by default" {
   run jq -e '([.outbounds[].tag] | index("next-hop")) == null
     and ([.routing.rules[].outboundTag] | index("next-hop")) == null
+    and ([.routing.rules[].ruleTag] | index("russian-domain-direct")) == null
+    and ([.routing.rules[].ruleTag] | index("russian-ip-direct")) == null
     and ([.inbounds[].tag] | index("local-socks")) == null
+    and .routing.domainStrategy == "IPIfNonMatch"
+    and (.geodata | not)
     and .outbounds[0].tag == "direct"' "${REPO_ROOT}/xray-scripts/config-server.example.json"
 
   [ "${status}" -eq 0 ]
@@ -243,6 +282,140 @@ EOF
   [ "${status}" -ne 0 ]
   [ "$(jq -r '.routing.rules[0].outboundTag' "${rendered}")" = "block" ]
   [ "$(jq -r '.routing.rules[1].outboundTag' "${rendered}")" = "block" ]
+}
+
+@test "xray renders Russian split routing with Friday geodata updates" {
+  local rendered="${TEST_TMPDIR}/russian-split.json"
+
+  xray_test_enable_next_hop
+  xray_render_russian_split_config "${XRAY_CONFIG}" "${rendered}"
+
+  jq -e '
+    .routing.domainStrategy == "IPOnDemand"
+    and .routing.rules[2].ruleTag == "russian-domain-direct"
+    and .routing.rules[2].inboundTag == ["vless-reality-vision-443"]
+    and .routing.rules[2].domain == ["geosite:tld-ru", "geosite:category-gov-ru"]
+    and .routing.rules[2].outboundTag == "direct"
+    and .routing.rules[3].ruleTag == "russian-ip-direct"
+    and .routing.rules[3].inboundTag == ["vless-reality-vision-443"]
+    and .routing.rules[3].ip == ["geoip:ru"]
+    and .routing.rules[3].outboundTag == "direct"
+    and .geodata.cron == "30 4 * * 5"
+    and .geodata.outbound == "next-hop"
+    and .geodata.assets == [
+      {
+        "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat",
+        "file": "geoip.dat"
+      },
+      {
+        "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat",
+        "file": "geosite.dat"
+      }
+    ]
+  ' "${rendered}" >/dev/null
+  [ "$(jq -r '.routing.rules[0].outboundTag' "${rendered}")" = "block" ]
+  [ "$(jq -r '.routing.rules[1].outboundTag' "${rendered}")" = "block" ]
+}
+
+@test "xray keeps Russian split rules before strict SOCKS and client next-hop rules" {
+  local rendered="${TEST_TMPDIR}/russian-split.json"
+  local with_socks="${TEST_TMPDIR}/russian-split-socks.json"
+
+  xray_test_enable_next_hop
+  xray_render_russian_split_config "${XRAY_CONFIG}" "${rendered}"
+  xray_render_local_socks_config "${rendered}" "${with_socks}" 1080
+  mv "${with_socks}" "${XRAY_CONFIG}"
+  xray_add_client_to_config "${XRAY_CONFIG}" "tablet" "uuid-tablet" "sid-tablet" "xray" "next-hop"
+
+  jq -e '
+    [.routing.rules[].ruleTag] == [
+      null,
+      null,
+      "russian-domain-direct",
+      "russian-ip-direct",
+      "local-socks-next-hop",
+      "client-next-hop"
+    ]
+    and .routing.rules[4].inboundTag == ["local-socks"]
+    and .routing.rules[4].outboundTag == "next-hop"
+    and .routing.rules[5].user == ["tablet"]
+  ' "${XRAY_CONFIG}" >/dev/null
+}
+
+@test "xray Russian split routing requires a next hop and a boolean setting" {
+  local rendered="${TEST_TMPDIR}/russian-split.json"
+
+  run xray_render_russian_split_config "${XRAY_CONFIG}" "${rendered}"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"next-hop outbound is missing"* ]]
+
+  run xray_validate_russian_split_routing 0
+  [ "$status" -eq 0 ]
+  run xray_validate_russian_split_routing 1
+  [ "$status" -eq 0 ]
+  run xray_validate_russian_split_routing yes
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be 0 or 1"* ]]
+}
+
+@test "xray prepares scheduled geodata for only the configured service user" {
+  local asset_dir="${TEST_TMPDIR}/assets"
+  local command_log="${TEST_TMPDIR}/permissions.log"
+  local rendered="${TEST_TMPDIR}/russian-split.json"
+
+  xray_test_enable_next_hop
+  xray_render_russian_split_config "${XRAY_CONFIG}" "${rendered}"
+  mkdir -p "${asset_dir}"
+  printf 'geoip\n' > "${asset_dir}/geoip.dat"
+  printf 'geosite\n' > "${asset_dir}/geosite.dat"
+
+  cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "cat" ]]; then
+  printf '[Service]\nUser=xray-test\n'
+  exit 0
+fi
+exit 0
+EOF
+  cat > "${TEST_TMPDIR}/bin/id" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "-gn" ]]; then
+  printf 'xray-test-group\n'
+fi
+exit 0
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/systemctl" "${TEST_TMPDIR}/bin/id"
+  cat > "${TEST_TMPDIR}/bin/chown" <<EOF
+#!/usr/bin/env bash
+printf 'chown %s\n' "\$*" >> "${command_log}"
+EOF
+  cat > "${TEST_TMPDIR}/bin/chmod" <<EOF
+#!/usr/bin/env bash
+printf 'chmod %s\n' "\$*" >> "${command_log}"
+EOF
+  /usr/bin/chmod +x "${TEST_TMPDIR}/bin/chown" "${TEST_TMPDIR}/bin/chmod"
+  hash -r
+
+  xray_prepare_geodata_permissions "${rendered}" "xray" "${asset_dir}"
+
+  assert_file_contains "${command_log}" "chown xray-test:xray-test-group ${asset_dir}"
+  assert_file_contains "${command_log}" "chown xray-test:xray-test-group ${asset_dir}/geoip.dat ${asset_dir}/geosite.dat"
+  assert_file_contains "${command_log}" "chmod 700 ${asset_dir}"
+  assert_file_contains "${command_log}" "chmod 600 ${asset_dir}/geoip.dat ${asset_dir}/geosite.dat"
+
+  rm -f "${asset_dir}/geoip.dat"
+  run xray_prepare_geodata_permissions "${rendered}" "xray" "${asset_dir}"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Xray geodata file is missing"* ]]
+}
+
+@test "xray installer exposes optional Russian split routing only with a next hop" {
+  local install_script="${REPO_ROOT}/xray-scripts/install.sh"
+
+  assert_file_contains "${install_script}" "XRAY_RUSSIAN_SPLIT_ROUTING=\"\${XRAY_RUSSIAN_SPLIT_ROUTING:-}\""
+  assert_file_contains "${install_script}" 'Route Russian destinations directly from this VPS?'
+  assert_file_contains "${install_script}" 'xray_render_russian_split_config'
+  assert_file_contains "${install_script}" 'xray_prepare_geodata_permissions'
 }
 
 @test "xray routes only explicitly selected clients through next hop" {

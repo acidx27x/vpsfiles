@@ -26,6 +26,7 @@ XRAY_CONFIG="${XRAY_CONFIG:-${XRAY_CONFIG_DEFAULT}}"
 XRAY_SERVICE="${XRAY_SERVICE:-${XRAY_SERVICE_DEFAULT}}"
 XRAY_NEXT_HOP_URI="${XRAY_NEXT_HOP_URI:-}"
 XRAY_LOCAL_SOCKS_PORT="${XRAY_LOCAL_SOCKS_PORT:-}"
+XRAY_RUSSIAN_SPLIT_ROUTING="${XRAY_RUSSIAN_SPLIT_ROUTING:-}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -198,6 +199,7 @@ render_server_config() {
   local tmp_file=""
   local next_hop_file=""
   local local_socks_file=""
+  local russian_split_file=""
 
   tmp_file="$(mktemp --suffix=.json)"
   jq \
@@ -218,6 +220,12 @@ render_server_config() {
     next_hop_file="$(mktemp --suffix=.json)"
     xray_render_next_hop_config "${tmp_file}" "${next_hop_file}"
     mv "${next_hop_file}" "${tmp_file}"
+  fi
+
+  if [[ "${XRAY_RUSSIAN_SPLIT_ROUTING}" == "1" ]]; then
+    russian_split_file="$(mktemp --suffix=.json)"
+    xray_render_russian_split_config "${tmp_file}" "${russian_split_file}"
+    mv "${russian_split_file}" "${tmp_file}"
   fi
 
   if [[ -n "${XRAY_LOCAL_SOCKS_PORT}" ]]; then
@@ -280,14 +288,28 @@ collect_settings() {
   prompt XRAY_TARGET "REALITY target host:port" "${XRAY_TARGET}"
   prompt XRAY_SERVER_NAME "REALITY serverName/SNI" "${XRAY_SERVER_NAME:-${default_server_name}}"
   prompt XRAY_NEXT_HOP_URI "Next-hop VLESS URI (leave empty for direct exit)" "${XRAY_NEXT_HOP_URI}"
+  if [[ -n "${XRAY_RUSSIAN_SPLIT_ROUTING}" ]]; then
+    xray_validate_russian_split_routing "${XRAY_RUSSIAN_SPLIT_ROUTING}"
+  fi
+  if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
+    xray_parse_next_hop_uri "${XRAY_NEXT_HOP_URI}"
+    if [[ -z "${XRAY_RUSSIAN_SPLIT_ROUTING}" ]]; then
+      if confirm "Route Russian destinations directly from this VPS?"; then
+        XRAY_RUSSIAN_SPLIT_ROUTING="1"
+      else
+        XRAY_RUSSIAN_SPLIT_ROUTING="0"
+      fi
+    fi
+  else
+    [[ "${XRAY_RUSSIAN_SPLIT_ROUTING:-0}" != "1" ]] \
+      || die "Russian split routing requires a next-hop VLESS URI"
+    XRAY_RUSSIAN_SPLIT_ROUTING="0"
+  fi
   prompt XRAY_LOCAL_SOCKS_PORT "Local SOCKS5 port routed through next hop (leave empty to disable)" "${XRAY_LOCAL_SOCKS_PORT}"
 
   [[ -n "${XRAY_ENDPOINT}" ]] || die "public endpoint cannot be empty"
   [[ -n "${XRAY_TARGET}" ]] || die "REALITY target cannot be empty"
   [[ -n "${XRAY_SERVER_NAME}" ]] || die "REALITY serverName cannot be empty"
-  if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
-    xray_parse_next_hop_uri "${XRAY_NEXT_HOP_URI}"
-  fi
   if [[ -n "${XRAY_LOCAL_SOCKS_PORT}" ]]; then
     [[ -n "${XRAY_NEXT_HOP_URI}" ]] \
       || die "local SOCKS5 requires a next-hop VLESS URI"
@@ -312,6 +334,12 @@ print_summary() {
   if [[ -n "${XRAY_NEXT_HOP_URI}" ]]; then
     echo "Next-hop outbound: available (${XRAY_NEXT_HOP_ADDRESS}:${XRAY_NEXT_HOP_PORT})"
     echo "Client routing:    direct by default; next hop by explicit selection"
+    if [[ "${XRAY_RUSSIAN_SPLIT_ROUTING}" == "1" ]]; then
+      echo "Russian split:     enabled for public VLESS clients (IP, TLD, and government domains)"
+      echo "Geodata updates:   Friday 04:30 VPS local time through next hop"
+    else
+      echo "Russian split:     not configured"
+    fi
   else
     echo "Next-hop outbound: not configured"
     echo "Client routing:    direct exit"
@@ -350,7 +378,7 @@ main() {
   echo
   echo "This will install packages, install or update Xray with the official XTLS installer,"
   echo "back up existing config if present, write ${XRAY_CONFIG}, enable BBR sysctl tuning,"
-  echo "configure UFW, optionally create a local SOCKS5 client path, and start ${XRAY_SERVICE}."
+  echo "configure UFW, optional split routing and local SOCKS5, and start ${XRAY_SERVICE}."
   if ! confirm "Continue?"; then
     echo "Aborted before making changes."
     exit 1
@@ -362,6 +390,9 @@ main() {
   generate_reality_keys
   XRAY_SERVER_SHORT_ID="$(generate_short_id)"
   render_server_config
+  if [[ "${XRAY_RUSSIAN_SPLIT_ROUTING}" == "1" ]]; then
+    xray_prepare_geodata_permissions "${XRAY_CONFIG}" "${XRAY_SERVICE}"
+  fi
   prepare_script_state
   enable_bbr_tuning
   setup_firewall
