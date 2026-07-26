@@ -275,6 +275,7 @@ xray_render_russian_split_config() {
   inbound_tag="$(xray_inbound_tag)"
   jq \
     --arg inbound_tag "${inbound_tag}" \
+    --arg dns_tag "dns-next-hop" \
     --arg domain_rule_tag "${XRAY_RUSSIAN_DOMAIN_RULE_TAG}" \
     --arg ip_rule_tag "${XRAY_RUSSIAN_IP_RULE_TAG}" \
     --arg direct_tag "direct" \
@@ -282,8 +283,23 @@ xray_render_russian_split_config() {
     --arg cron "${XRAY_GEODATA_CRON}" \
     --arg geoip_url "${XRAY_GEOIP_URL}" \
     --arg geosite_url "${XRAY_GEOSITE_URL}" \
-    '.routing.domainStrategy = "IPOnDemand"
-    | .routing.rules += [
+    '.dns = {
+      "servers": [
+        "https://1.1.1.1/dns-query",
+        "https://8.8.8.8/dns-query"
+      ],
+      "queryStrategy": "UseIP",
+      "tag": $dns_tag
+    }
+    | .routing.domainStrategy = "IPOnDemand"
+    | .routing.rules = ([
+      {
+        "ruleTag": $dns_tag,
+        "type": "field",
+        "inboundTag": [$dns_tag],
+        "outboundTag": $next_hop_tag
+      }
+    ] + .routing.rules + [
       {
         "ruleTag": $domain_rule_tag,
         "type": "field",
@@ -298,7 +314,7 @@ xray_render_russian_split_config() {
         "ip": ["geoip:ru"],
         "outboundTag": $direct_tag
       }
-    ]
+    ])
     | .geodata = {
       "cron": $cron,
       "outbound": $next_hop_tag,

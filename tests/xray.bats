@@ -153,10 +153,12 @@ EOF
 @test "xray server template remains a direct exit by default" {
   run jq -e '([.outbounds[].tag] | index("next-hop")) == null
     and ([.routing.rules[].outboundTag] | index("next-hop")) == null
+    and ([.routing.rules[].ruleTag] | index("dns-next-hop")) == null
     and ([.routing.rules[].ruleTag] | index("russian-domain-direct")) == null
     and ([.routing.rules[].ruleTag] | index("russian-ip-direct")) == null
     and ([.inbounds[].tag] | index("local-socks")) == null
     and .routing.domainStrategy == "IPIfNonMatch"
+    and (has("dns") | not)
     and (.geodata | not)
     and .outbounds[0].tag == "direct"' "${REPO_ROOT}/xray-scripts/config-server.example.json"
 
@@ -280,26 +282,39 @@ EOF
   )' "${rendered}" >/dev/null
   run jq -e '.routing.rules[] | select(.outboundTag == "next-hop")' "${rendered}"
   [ "${status}" -ne 0 ]
+  run jq -e 'has("dns") or any(.routing.rules[]; .ruleTag == "dns-next-hop")' "${rendered}"
+  [ "${status}" -ne 0 ]
   [ "$(jq -r '.routing.rules[0].outboundTag' "${rendered}")" = "block" ]
   [ "$(jq -r '.routing.rules[1].outboundTag' "${rendered}")" = "block" ]
 }
 
-@test "xray renders Russian split routing with Friday geodata updates" {
+@test "xray renders Russian split routing with next-hop DNS and Friday geodata updates" {
   local rendered="${TEST_TMPDIR}/russian-split.json"
 
   xray_test_enable_next_hop
   xray_render_russian_split_config "${XRAY_CONFIG}" "${rendered}"
 
   jq -e '
-    .routing.domainStrategy == "IPOnDemand"
-    and .routing.rules[2].ruleTag == "russian-domain-direct"
-    and .routing.rules[2].inboundTag == ["vless-reality-vision-443"]
-    and .routing.rules[2].domain == ["geosite:tld-ru", "geosite:category-gov-ru"]
-    and .routing.rules[2].outboundTag == "direct"
-    and .routing.rules[3].ruleTag == "russian-ip-direct"
+    .dns.servers == [
+      "https://1.1.1.1/dns-query",
+      "https://8.8.8.8/dns-query"
+    ]
+    and .dns.queryStrategy == "UseIP"
+    and .dns.tag == "dns-next-hop"
+    and (.dns | has("disableFallback") | not)
+    and .routing.domainStrategy == "IPOnDemand"
+    and .routing.rules[0].ruleTag == "dns-next-hop"
+    and .routing.rules[0].type == "field"
+    and .routing.rules[0].inboundTag == ["dns-next-hop"]
+    and .routing.rules[0].outboundTag == "next-hop"
+    and .routing.rules[3].ruleTag == "russian-domain-direct"
     and .routing.rules[3].inboundTag == ["vless-reality-vision-443"]
-    and .routing.rules[3].ip == ["geoip:ru"]
+    and .routing.rules[3].domain == ["geosite:tld-ru", "geosite:category-gov-ru"]
     and .routing.rules[3].outboundTag == "direct"
+    and .routing.rules[4].ruleTag == "russian-ip-direct"
+    and .routing.rules[4].inboundTag == ["vless-reality-vision-443"]
+    and .routing.rules[4].ip == ["geoip:ru"]
+    and .routing.rules[4].outboundTag == "direct"
     and .geodata.cron == "30 4 * * 5"
     and .geodata.outbound == "next-hop"
     and .geodata.assets == [
@@ -313,8 +328,8 @@ EOF
       }
     ]
   ' "${rendered}" >/dev/null
-  [ "$(jq -r '.routing.rules[0].outboundTag' "${rendered}")" = "block" ]
   [ "$(jq -r '.routing.rules[1].outboundTag' "${rendered}")" = "block" ]
+  [ "$(jq -r '.routing.rules[2].outboundTag' "${rendered}")" = "block" ]
 }
 
 @test "xray keeps Russian split rules before strict SOCKS and client next-hop rules" {
@@ -328,17 +343,27 @@ EOF
   xray_add_client_to_config "${XRAY_CONFIG}" "tablet" "uuid-tablet" "sid-tablet" "xray" "next-hop"
 
   jq -e '
-    [.routing.rules[].ruleTag] == [
-      null,
-      null,
+    [
+      .routing.rules[]
+      | if .ip == ["geoip:private"] and .outboundTag == "block" then
+          "private-ip-block"
+        elif .protocol == ["bittorrent"] and .outboundTag == "block" then
+          "bittorrent-block"
+        else
+          .ruleTag
+        end
+    ] == [
+      "dns-next-hop",
+      "private-ip-block",
+      "bittorrent-block",
       "russian-domain-direct",
       "russian-ip-direct",
       "local-socks-next-hop",
       "client-next-hop"
     ]
-    and .routing.rules[4].inboundTag == ["local-socks"]
-    and .routing.rules[4].outboundTag == "next-hop"
-    and .routing.rules[5].user == ["tablet"]
+    and .routing.rules[5].inboundTag == ["local-socks"]
+    and .routing.rules[5].outboundTag == "next-hop"
+    and .routing.rules[6].user == ["tablet"]
   ' "${XRAY_CONFIG}" >/dev/null
 }
 
