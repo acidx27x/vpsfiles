@@ -251,6 +251,7 @@ xray_render_next_hop_config() {
         "network": "raw",
         "security": "reality",
         "realitySettings": {
+          "minClientVer": "0.0.0",
           "serverName": $server_name,
           "fingerprint": $fingerprint,
           "password": $public_key,

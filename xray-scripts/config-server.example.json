@@ -18,6 +18,7 @@
         "network": "raw",
         "security": "reality",
         "realitySettings": {
+          "minClientVer": "0.0.0",
           "show": false,
           "target": "www.firefox.com:443",
           "xver": 0,
