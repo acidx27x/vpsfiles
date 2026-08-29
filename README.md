@@ -4,7 +4,7 @@ This repository contains standalone Debian/Ubuntu VPS script bundles for:
 
 - `wireguard-scripts`
 - `amnezia-scripts`
-- `adguardhome-scripts` (native AdGuard Home with an SSH-tunneled admin UI)
+- `adguardhome-scripts` (native AdGuard Home with local recursive Unbound and an SSH-tunneled admin UI)
 - `xray-scripts`
 - `telemt-scripts`
 - `nginx-scripts` (standalone HTTPS fallback site for Xray REALITY)
@@ -39,14 +39,14 @@ sudo ./install.sh
 
 It derives bounded journal and coredump limits from the VPS resources, schedules safe daily cleanup, enables log rotation, and configures compressed zram swap when supported. See `system-scripts/README.md` for managed paths and behavior.
 
-The standalone AdGuard Home installer adds a native DNS filtering service without changing UFW, the VPS resolver, or any VPN/proxy client configuration:
+The standalone AdGuard Home installer adds a native DNS filtering service backed by local recursive Unbound without changing UFW, the VPS resolver, or any VPN/proxy client configuration:
 
 ```bash
 cd adguardhome-scripts
 sudo ./install.sh
 ```
 
-Its admin UI stays on `127.0.0.1:3000` for SSH-tunneled access. DNS listener addresses and WireGuard, AmneziaWG, Xray, or other consumer settings are configured manually. See `adguardhome-scripts/README.md` for private-listener guidance and retained-data uninstall behavior.
+Its admin UI stays on `127.0.0.1:3000`; Unbound stays on `127.0.0.1:5335` and performs direct DNSSEC-validating recursion without a public forwarding fallback. DNS listener addresses, AdGuard's upstream, and WireGuard, AmneziaWG, Xray, or other consumer settings are configured manually. See `adguardhome-scripts/README.md` for the post-wizard settings, private-listener guidance, and retained-data uninstall behavior.
 
 When Xray is installed with an optional next-hop URI, routing is selected per client:
 

@@ -121,6 +121,54 @@ Telegram client -> Telemt on VPS1 -> local Xray SOCKS5 -> VLESS/Xray VPS2 -> Tel
 
 For unattended Xray installation, pass the settings explicitly. For example, `sudo XRAY_NEXT_HOP_URI='<vless-uri>' XRAY_RUSSIAN_SPLIT_ROUTING=1 XRAY_LOCAL_SOCKS_PORT=1080 ./install.sh` enables Russian splitting; use `XRAY_RUSSIAN_SPLIT_ROUTING=0` to disable it without a prompt. `update.sh` preserves the generated Xray configuration.
 
+## Local DNS with AdGuard Home and Unbound
+
+The separate `../adguardhome-scripts` bundle can provide local recursive DNS to
+Xray without changing this installer's defaults. Install and finish the AdGuard
+Home wizard first, configure AdGuard Home to listen on `127.0.0.1:53`, and set
+its only upstream to Unbound at `127.0.0.1:5335` as described in that bundle's
+README.
+
+For a normal Xray config without a top-level `dns` object, add:
+
+```json
+"dns": {
+  "servers": ["tcp+local://127.0.0.1:53"]
+}
+```
+
+The local TCP form bypasses Xray routing for the DNS query, which is necessary
+because the generated config blocks loopback as an ordinary proxied destination.
+
+For a config generated with Russian split routing, replace only its DNS server
+and remove the obsolete `dns-next-hop` tag and rule:
+
+```bash
+tmp="$(mktemp)"
+trap 'rm -f -- "${tmp}"' EXIT
+sudo jq '
+  .dns.servers = ["tcp+local://127.0.0.1:53"]
+  | .dns |= del(.tag)
+  | .routing.rules |= map(select(.ruleTag != "dns-next-hop"))
+' /usr/local/etc/xray/config.json | sudo tee "${tmp}" >/dev/null
+sudo xray run -test -config "${tmp}"
+sudo install -m 600 -o root -g root "${tmp}" /usr/local/etc/xray/config.json
+rm -f -- "${tmp}"
+trap - EXIT
+sudo systemctl restart xray
+```
+
+This keeps `routing.domainStrategy` set to `IPOnDemand`, preserves the
+`russian-domain-direct` and `russian-ip-direct` geodata rules, and replaces the
+Cloudflare/Google DoH path rather than adding a fallback. The Xray updater
+preserves the current server config. Reinstalling Xray can regenerate the
+public-DoH split-routing config, so reapply this local-DNS change after a
+reinstall.
+
+This affects Xray's server-side lookups only; it does not push DNS settings to
+VLESS clients. Recursive DNS still needs outbound UDP and TCP port `53`, and it
+does not bypass IP, TLS/SNI, or DPI blocking.
+
 ## Client Commands
 
 After install, the server starts with an empty client list. Create the first client with a unique UUID and REALITY shortId, add it to the server config, and write a VLESS share URI:

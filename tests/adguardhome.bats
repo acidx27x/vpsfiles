@@ -6,6 +6,8 @@ setup() {
   load_core
   # shellcheck source=adguardhome-scripts/adguardhome.sh
   . "${REPO_ROOT}/adguardhome-scripts/adguardhome.sh"
+  # shellcheck source=adguardhome-scripts/unbound.sh
+  . "${REPO_ROOT}/adguardhome-scripts/unbound.sh"
   make_temp_dir
 }
 
@@ -188,4 +190,218 @@ EOF
   [ "$(<"${config}")" = "old-config" ]
   assert_file_contains "${SYSTEMCTL_LOG}" 'stop AdGuardHome'
   assert_file_not_contains "${SYSTEMCTL_LOG}" 'start AdGuardHome'
+}
+
+@test "unbound renders the exact loopback-only recursive configuration" {
+  local expected=""
+  expected=$'server:\n    interface: 127.0.0.1@5335\n    access-control: 127.0.0.0/8 allow\n    do-ip4: yes\n    do-ip6: no\n    do-udp: yes\n    do-tcp: yes\n    hide-identity: yes\n    hide-version: yes\n    edns-buffer-size: 1232\n    prefetch: yes'
+
+  run unbound_render_config
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${expected}" ]
+  [[ "${output}" != *"forward-zone"* ]]
+  [[ "${output}" != *"forward-addr"* ]]
+  [[ "${output}" != *"1.1.1.1"* ]]
+  [[ "${output}" != *"8.8.8.8"* ]]
+  [[ "${output}" != *"9.9.9.9"* ]]
+}
+
+@test "unbound rejects a TCP or UDP conflict on its loopback port" {
+  ss() {
+    if [[ "$*" == *"-ltn"* ]]; then
+      printf 'LISTEN 0 4096 127.0.0.1:5335 0.0.0.0:*\n'
+    fi
+  }
+
+  run unbound_loopback_port_is_available
+  [ "${status}" -ne 0 ]
+
+  ss() {
+    if [[ "$*" == *"-lun"* ]]; then
+      printf 'UNCONN 0 0 0.0.0.0:5335 0.0.0.0:*\n'
+    fi
+  }
+  run unbound_loopback_port_is_available
+  [ "${status}" -ne 0 ]
+}
+
+@test "unbound preflight rejects active and custom existing resolvers" {
+  UNBOUND_ETC_DIR="${TEST_TMPDIR}/etc/unbound"
+  UNBOUND_MANAGED_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/vpsfiles-adguardhome.conf"
+  UNBOUND_RESOLVCONF_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/resolvconf_resolvers.conf"
+  UNBOUND_RESOLVCONF_CONF="${TEST_TMPDIR}/etc/resolvconf.conf"
+  UNBOUND_STATE_DIR="${TEST_TMPDIR}/state/unbound"
+  mkdir -p "${UNBOUND_ETC_DIR}"
+  ss() { return 0; }
+  systemctl() {
+    [[ "$1" == "is-active" ]]
+  }
+
+  run unbound_preflight
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"active Unbound service"* ]]
+
+  systemctl() { return 1; }
+  dpkg-query() { return 1; }
+  printf 'server:\n    interface: 192.0.2.1\n' > "${UNBOUND_ETC_DIR}/custom.conf"
+  run unbound_preflight
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"custom Unbound configuration"* ]]
+
+  rm -f "${UNBOUND_ETC_DIR}/custom.conf"
+  mkdir -p "$(dirname "${UNBOUND_RESOLVCONF_CONFIG}")"
+  printf 'forward-zone:\n' > "${UNBOUND_RESOLVCONF_CONFIG}"
+  run unbound_preflight
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"is not explained by unbound_conf"* ]]
+}
+
+@test "unbound disables and restores resolvconf integration and service state" {
+  UNBOUND_ETC_DIR="${TEST_TMPDIR}/etc/unbound"
+  UNBOUND_MANAGED_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/vpsfiles-adguardhome.conf"
+  UNBOUND_RESOLVCONF_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/resolvconf_resolvers.conf"
+  UNBOUND_RESOLVCONF_CONF="${TEST_TMPDIR}/etc/resolvconf.conf"
+  UNBOUND_STATE_DIR="${TEST_TMPDIR}/state/unbound"
+  SYSTEMCTL_LOG="${TEST_TMPDIR}/systemctl.log"
+  export SYSTEMCTL_LOG
+  mkdir -p "$(dirname "${UNBOUND_RESOLVCONF_CONFIG}")"
+  printf 'name_servers=127.0.0.1\nunbound_conf=%s\n' \
+    "${UNBOUND_RESOLVCONF_CONFIG}" > "${UNBOUND_RESOLVCONF_CONF}"
+  printf 'forward-zone:\n    name: .\n' > "${UNBOUND_RESOLVCONF_CONFIG}"
+  cp "${UNBOUND_RESOLVCONF_CONF}" "${TEST_TMPDIR}/resolvconf.before"
+  cp "${UNBOUND_RESOLVCONF_CONFIG}" "${TEST_TMPDIR}/generated.before"
+  systemctl() {
+    printf '%s\n' "$*" >> "${SYSTEMCTL_LOG}"
+    case "$1" in
+      cat) return 0 ;;
+      is-active) return 1 ;;
+      is-enabled) printf 'disabled\n'; return 1 ;;
+      *) return 0 ;;
+    esac
+  }
+
+  unbound_initialize_state
+  unbound_deactivate_resolvconf
+  assert_file_contains "${UNBOUND_RESOLVCONF_CONF}" \
+    '# Disabled by vpsfiles adguardhome-scripts: unbound_conf='
+  [ ! -e "${UNBOUND_RESOLVCONF_CONFIG}" ]
+  assert_file_contains "${SYSTEMCTL_LOG}" "stop ${UNBOUND_RESOLVCONF_SERVICE}"
+  assert_file_contains "${SYSTEMCTL_LOG}" "disable ${UNBOUND_RESOLVCONF_SERVICE}"
+  assert_file_contains "${SYSTEMCTL_LOG}" "mask ${UNBOUND_RESOLVCONF_SERVICE}"
+
+  unbound_restore_bundle_state
+  cmp -s "${UNBOUND_RESOLVCONF_CONF}" "${TEST_TMPDIR}/resolvconf.before"
+  cmp -s "${UNBOUND_RESOLVCONF_CONFIG}" "${TEST_TMPDIR}/generated.before"
+  [ ! -e "${UNBOUND_STATE_DIR}" ]
+  assert_file_contains "${SYSTEMCTL_LOG}" "unmask ${UNBOUND_RESOLVCONF_SERVICE}"
+}
+
+@test "unbound distinguishes configuration startup UDP and TCP failures" {
+  UNBOUND_ETC_DIR="${TEST_TMPDIR}/etc/unbound"
+  UNBOUND_MANAGED_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/vpsfiles-adguardhome.conf"
+  UNBOUND_RESOLVCONF_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/resolvconf_resolvers.conf"
+  UNBOUND_RESOLVCONF_CONF="${TEST_TMPDIR}/etc/resolvconf.conf"
+  UNBOUND_STATE_DIR="${TEST_TMPDIR}/state/unbound"
+  mkdir -p "$(dirname "${UNBOUND_MANAGED_CONFIG}")"
+  unbound-checkconf() {
+    [[ "${FAIL_STAGE}" != "config" ]]
+  }
+  systemctl() {
+    if [[ "$1" == "restart" && "${FAIL_STAGE}" == "startup" ]]; then
+      return 1
+    fi
+    return 0
+  }
+  dig() {
+    if [[ "${FAIL_STAGE}" == "udp" && "$*" == *"+notcp"* ]]; then
+      return 1
+    fi
+    if [[ "${FAIL_STAGE}" == "tcp" && "$*" == *"+tcp"* ]]; then
+      return 1
+    fi
+    printf '192.0.2.1\n'
+  }
+
+  FAIL_STAGE=none
+  unbound_initialize_state
+  FAIL_STAGE=config
+  run unbound_activate
+  [ "${status}" -eq 20 ]
+  unbound_restore_bundle_state
+  [ ! -e "${UNBOUND_MANAGED_CONFIG}" ]
+  [ ! -e "${UNBOUND_STATE_DIR}" ]
+
+  unbound_initialize_state
+  FAIL_STAGE=startup
+  run unbound_activate
+  [ "${status}" -eq 21 ]
+  unbound_restore_bundle_state
+  [ ! -e "${UNBOUND_MANAGED_CONFIG}" ]
+  [ ! -e "${UNBOUND_STATE_DIR}" ]
+
+  unbound_initialize_state
+  FAIL_STAGE=udp
+  run unbound_activate
+  [ "${status}" -eq 22 ]
+  unbound_restore_bundle_state
+  [ ! -e "${UNBOUND_MANAGED_CONFIG}" ]
+  [ ! -e "${UNBOUND_STATE_DIR}" ]
+
+  unbound_initialize_state
+  FAIL_STAGE=tcp
+  run unbound_activate
+  [ "${status}" -eq 23 ]
+  unbound_restore_bundle_state
+  [ ! -e "${UNBOUND_MANAGED_CONFIG}" ]
+  [ ! -e "${UNBOUND_STATE_DIR}" ]
+}
+
+@test "unbound update preserves stopped state and validates active UDP and TCP" {
+  UNBOUND_ETC_DIR="${TEST_TMPDIR}/etc/unbound"
+  UNBOUND_MANAGED_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/vpsfiles-adguardhome.conf"
+  UNBOUND_RESOLVCONF_CONFIG="${UNBOUND_ETC_DIR}/unbound.conf.d/resolvconf_resolvers.conf"
+  UNBOUND_RESOLVCONF_CONF="${TEST_TMPDIR}/etc/resolvconf.conf"
+  UNBOUND_STATE_DIR="${TEST_TMPDIR}/state/unbound"
+  SYSTEMCTL_LOG="${TEST_TMPDIR}/systemctl.log"
+  DIG_LOG="${TEST_TMPDIR}/dig.log"
+  export SYSTEMCTL_LOG DIG_LOG
+  systemctl() {
+    printf '%s\n' "$*" >> "${SYSTEMCTL_LOG}"
+    case "$1" in
+      cat) return 0 ;;
+      is-enabled) printf 'disabled\n'; return 1 ;;
+      *) return 0 ;;
+    esac
+  }
+  unbound-checkconf() { return 0; }
+  dig() {
+    printf '%s\n' "$*" >> "${DIG_LOG}"
+    printf '192.0.2.1\n'
+  }
+  unbound_initialize_state
+  # shellcheck source=adguardhome-scripts/update.sh
+  . "${REPO_ROOT}/adguardhome-scripts/update.sh"
+
+  unbound_update_runtime 0
+  assert_file_contains "${SYSTEMCTL_LOG}" "stop ${UNBOUND_SERVICE}"
+  [ ! -e "${DIG_LOG}" ]
+
+  : > "${SYSTEMCTL_LOG}"
+  unbound_update_runtime 1
+  assert_file_contains "${SYSTEMCTL_LOG}" "restart ${UNBOUND_SERVICE}"
+  assert_file_contains "${DIG_LOG}" '+notcp'
+  assert_file_contains "${DIG_LOG}" '+tcp'
+}
+
+@test "adguardhome uninstall removes only managed Unbound state and retains packages" {
+  assert_file_contains "${REPO_ROOT}/adguardhome-scripts/install.sh" \
+    'trap cleanup_install EXIT'
+  assert_file_contains "${REPO_ROOT}/adguardhome-scripts/install.sh" \
+    'unbound_restore_bundle_state'
+  assert_file_contains "${REPO_ROOT}/adguardhome-scripts/uninstall.sh" \
+    'unbound_restore_bundle_state'
+  assert_file_contains "${REPO_ROOT}/adguardhome-scripts/uninstall.sh" \
+    'Unbound, dns-root-data, and dnsutils packages were retained.'
+  assert_file_not_contains "${REPO_ROOT}/adguardhome-scripts/uninstall.sh" \
+    'apt-get remove'
 }
