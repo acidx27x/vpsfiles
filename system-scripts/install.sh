@@ -16,6 +16,8 @@ VPS_ZRAM_DEVICE_PATH="${VPS_ZRAM_DEVICE_PATH:-/sys/block/zram0}"
 VPS_ZRAM_MAIN_CONFIG="${VPS_ZRAM_MAIN_CONFIG:-/etc/systemd/zram-generator.conf}"
 VPS_ZRAM_CONFIG_DIR="${VPS_ZRAM_CONFIG_DIR:-/etc/systemd/zram-generator.conf.d}"
 VPS_SYSTEM_STATE_DIR="${VPS_SYSTEM_STATE_DIR:-/var/lib/vpsfiles-system}"
+VPS_APT_PERIODIC_CONFIG="${VPS_APT_PERIODIC_CONFIG:-/etc/apt/apt.conf.d/99-vpsfiles-disable-auto-updates}"
+VPS_AUTO_UPDATE_STATE_DIR="${VPS_AUTO_UPDATE_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/auto-updates}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -70,6 +72,113 @@ vps_system_initialize_state() {
   printf '0\n' > "${temporary_directory}/zram-package-installed-by-bundle"
   chmod 600 "${temporary_directory}/"*
   mv -- "${temporary_directory}" "${VPS_SYSTEM_STATE_DIR}"
+}
+
+vps_system_validate_auto_update_paths() {
+  [[ "${VPS_APT_PERIODIC_CONFIG}" == /* && "${VPS_APT_PERIODIC_CONFIG}" != "/" ]] \
+    || vps_die "managed APT periodic configuration path is unsafe: ${VPS_APT_PERIODIC_CONFIG}"
+  vps_system_require_managed_or_absent "${VPS_APT_PERIODIC_CONFIG}"
+  vps_system_validate_auto_update_state "${VPS_AUTO_UPDATE_STATE_DIR}"
+}
+
+vps_system_initialize_auto_update_state() {
+  local temporary_directory=""
+  local unit=""
+  local unit_file_state=""
+  local unit_state_dir=""
+  local was_active=0
+  local was_masked=0
+
+  if [[ -e "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
+    vps_system_validate_auto_update_state "${VPS_AUTO_UPDATE_STATE_DIR}"
+    return 0
+  fi
+  [[ -d "${VPS_SYSTEM_STATE_DIR}" ]] \
+    || vps_die "system-scripts state must be initialized before automatic-update state"
+  temporary_directory="$(mktemp -d "${VPS_SYSTEM_STATE_DIR}/.auto-updates.XXXXXX")"
+  if ! install -d -m 700 "${temporary_directory}/units"; then
+    vps_safe_remove_path "${temporary_directory}"
+    return 1
+  fi
+  printf '1\n' > "${temporary_directory}/state-version"
+  : > "${temporary_directory}/kernel-holds-added"
+  chmod 600 "${temporary_directory}/state-version" "${temporary_directory}/kernel-holds-added"
+  for unit in "${VPS_SYSTEM_AUTO_UPDATE_UNITS[@]}"; do
+    was_active=0
+    was_masked=0
+    systemctl is-active --quiet "${unit}" >/dev/null 2>&1 && was_active=1
+    unit_file_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+    if [[ "${unit_file_state}" == "masked" || "${unit_file_state}" == "masked-runtime" ]]; then
+      was_masked=1
+    fi
+    unit_state_dir="${temporary_directory}/units/${unit}"
+    install -d -m 700 "${unit_state_dir}"
+    printf '%s\n' "${was_masked}" > "${unit_state_dir}/was-masked"
+    printf '%s\n' "${was_active}" > "${unit_state_dir}/was-active"
+    chmod 600 "${unit_state_dir}/was-masked" "${unit_state_dir}/was-active"
+  done
+  mv -- "${temporary_directory}" "${VPS_AUTO_UPDATE_STATE_DIR}"
+}
+
+vps_system_disable_auto_updates() {
+  local apt_config=""
+  local current_holds=""
+  local package=""
+  local unit=""
+  local unit_file_state=""
+  local -a kernel_packages=()
+
+  vps_require_commands apt-config apt-mark sort
+  vps_system_validate_auto_update_paths
+  vps_system_initialize_auto_update_state
+  vps_system_install_rendered_file \
+    "${VPS_APT_PERIODIC_CONFIG}" 644 vps_system_render_apt_periodic_config
+  for unit in "${VPS_SYSTEM_AUTO_UPDATE_UNITS[@]}"; do
+    systemctl mask "${unit}" >/dev/null
+    if systemctl is-active --quiet "${unit}" >/dev/null 2>&1; then
+      systemctl stop "${unit}"
+    fi
+  done
+  mapfile -t kernel_packages < <(vps_system_detect_kernel_meta_packages)
+  current_holds="$(apt-mark showhold)"
+  if (( ${#kernel_packages[@]} == 0 )); then
+    printf 'No installed Ubuntu kernel meta-packages were detected; no kernel holds were added.\n'
+  else
+    for package in "${kernel_packages[@]}"; do
+      if ! grep -qxF -- "${package}" <<< "${current_holds}"; then
+        vps_system_record_added_kernel_hold \
+          "${VPS_AUTO_UPDATE_STATE_DIR}/kernel-holds-added" "${package}"
+        apt-mark hold "${package}"
+        current_holds="${current_holds}"$'\n'"${package}"
+      fi
+    done
+  fi
+  apt_config="$(apt-config dump)"
+  for package in \
+    'APT::Periodic::Enable "0";' \
+    'APT::Periodic::Update-Package-Lists "0";' \
+    'APT::Periodic::Unattended-Upgrade "0";'; do
+    grep -qxF -- "${package}" <<< "${apt_config}" \
+      || vps_die "APT periodic updates were not disabled: ${package}"
+  done
+  for unit in "${VPS_SYSTEM_AUTO_UPDATE_UNITS[@]}"; do
+    unit_file_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+    [[ "${unit_file_state}" == "masked" || "${unit_file_state}" == "masked-runtime" ]] \
+      || vps_die "automatic-update unit was not masked: ${unit}"
+    if systemctl is-active --quiet "${unit}" >/dev/null 2>&1; then
+      vps_die "automatic-update unit is still active: ${unit}"
+    fi
+  done
+  current_holds="$(apt-mark showhold)"
+  for package in "${kernel_packages[@]}"; do
+    grep -qxF -- "${package}" <<< "${current_holds}" \
+      || vps_die "kernel meta-package was not held: ${package}"
+  done
+  printf 'Automatic APT activity is disabled and its systemd units are masked.\n'
+  if (( ${#kernel_packages[@]} > 0 )); then
+    printf 'Held kernel meta-packages:\n'
+    printf '  %s\n' "${kernel_packages[@]}"
+  fi
 }
 
 vps_system_detect_memory_mib() {
@@ -161,6 +270,7 @@ vps_system_configure_zram() {
 
 vps_system_main() {
   local coredump_limit_mib=""
+  local disable_auto_updates=0
   local filesystem_mib=""
   local journal_limit_mib=""
   local keep_free_mib=""
@@ -200,8 +310,29 @@ vps_system_main() {
     return 1
   fi
 
+  if [[ -d "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
+    disable_auto_updates=1
+    printf 'Automatic updates were disabled by an earlier run and will remain disabled.\n'
+  elif vps_system_is_ubuntu; then
+    printf '%s\n' \
+      '' \
+      'Optional Ubuntu update lock:' \
+      'This stops automatic userspace and kernel security updates.' \
+      'You must run and review manual updates to keep the VPS secure.'
+    if vps_confirm "Disable automatic APT and kernel updates?"; then
+      disable_auto_updates=1
+    else
+      printf 'Automatic APT and kernel updates will remain unchanged.\n'
+    fi
+  fi
+  if [[ "${disable_auto_updates}" == "1" ]]; then
+    vps_system_validate_auto_update_paths
+  fi
   vps_system_initialize_state
   vps_install_packages kmod logrotate util-linux
+  if [[ "${disable_auto_updates}" == "1" ]]; then
+    vps_system_disable_auto_updates
+  fi
   vps_require_commands apt-cache flock journalctl modprobe swapon systemd-analyze systemd-detect-virt systemd-tmpfiles
 
   vps_system_install_rendered_file \

@@ -12,6 +12,8 @@ VPS_MAINTENANCE_SERVICE="${VPS_MAINTENANCE_SERVICE:-/etc/systemd/system/vpsfiles
 VPS_MAINTENANCE_TIMER="${VPS_MAINTENANCE_TIMER:-/etc/systemd/system/vpsfiles-maintenance.timer}"
 VPS_SYSTEM_STATE_DIR="${VPS_SYSTEM_STATE_DIR:-/var/lib/vpsfiles-system}"
 VPS_MAINTENANCE_LOCK_FILE="${VPS_MAINTENANCE_LOCK_FILE:-/run/lock/vpsfiles-maintenance.lock}"
+VPS_APT_PERIODIC_CONFIG="${VPS_APT_PERIODIC_CONFIG:-/etc/apt/apt.conf.d/99-vpsfiles-disable-auto-updates}"
+VPS_AUTO_UPDATE_STATE_DIR="${VPS_AUTO_UPDATE_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/auto-updates}"
 
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
@@ -36,6 +38,11 @@ vps_system_uninstall_validate() {
     vps_system_require_managed_or_absent "${path}"
   done
   vps_system_validate_state_dir "${VPS_SYSTEM_STATE_DIR}"
+  if [[ -d "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
+    [[ "${VPS_APT_PERIODIC_CONFIG}" == /* && "${VPS_APT_PERIODIC_CONFIG}" != "/" ]] \
+      || vps_die "managed APT periodic configuration path is unsafe: ${VPS_APT_PERIODIC_CONFIG}"
+    vps_system_require_managed_or_absent "${VPS_APT_PERIODIC_CONFIG}"
+  fi
   [[ "${VPS_MAINTENANCE_LOCK_FILE}" == /* && "${VPS_MAINTENANCE_LOCK_FILE}" != "/" ]] \
     || vps_die "maintenance lock path is unsafe: ${VPS_MAINTENANCE_LOCK_FILE}"
 }
@@ -63,7 +70,43 @@ vps_system_restore_logrotate() {
   fi
 }
 
+vps_system_restore_auto_updates() {
+  local current_holds=""
+  local package=""
+  local unit=""
+  local unit_state_dir=""
+  local was_active=""
+  local was_masked=""
+
+  vps_safe_remove_file_path "${VPS_APT_PERIODIC_CONFIG}"
+  current_holds="$(apt-mark showhold)"
+  while IFS= read -r package; do
+    [[ -n "${package}" ]] || continue
+    if grep -qxF -- "${package}" <<< "${current_holds}"; then
+      apt-mark unhold "${package}"
+    fi
+  done < "${VPS_AUTO_UPDATE_STATE_DIR}/kernel-holds-added"
+  for unit in "${VPS_SYSTEM_AUTO_UPDATE_UNITS[@]}"; do
+    unit_state_dir="${VPS_AUTO_UPDATE_STATE_DIR}/units/${unit}"
+    was_masked="$(vps_system_read_binary_state "${unit_state_dir}/was-masked")"
+    was_active="$(vps_system_read_binary_state "${unit_state_dir}/was-active")"
+    if [[ "${was_masked}" == "0" ]]; then
+      systemctl unmask "${unit}" >/dev/null
+      if [[ "${was_active}" == "1" ]]; then
+        systemctl start "${unit}"
+      fi
+    elif [[ "${was_active}" == "1" ]]; then
+      systemctl unmask "${unit}" >/dev/null
+      systemctl start "${unit}"
+      systemctl mask "${unit}" >/dev/null
+    fi
+  done
+  systemctl daemon-reload
+  printf 'Restored the recorded automatic-update unit states and bundle-added kernel holds.\n'
+}
+
 vps_system_uninstall_main() {
+  local has_auto_update_state=0
   local has_state=0
   local logrotate_was_active=""
   local logrotate_was_enabled=""
@@ -78,6 +121,10 @@ vps_system_uninstall_main() {
   vps_require_commands apt-get dpkg-query flock grep install stat swapon systemctl
   vps_system_uninstall_validate
 
+  if [[ -d "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
+    has_auto_update_state=1
+    vps_require_commands apt-mark
+  fi
   if [[ -d "${VPS_SYSTEM_STATE_DIR}" ]]; then
     has_state=1
     logrotate_was_enabled="$(vps_system_read_binary_state "${VPS_SYSTEM_STATE_DIR}/logrotate-was-enabled")"
@@ -100,6 +147,12 @@ vps_system_uninstall_main() {
     "  Maintenance units:    ${VPS_MAINTENANCE_SERVICE}, ${VPS_MAINTENANCE_TIMER}" \
     "  Installer state:      ${VPS_SYSTEM_STATE_DIR}" \
     "  Zram package removal: $([[ "${remove_zram_package}" == "1" ]] && printf yes || printf no)"
+  if [[ "${has_auto_update_state}" == "1" ]]; then
+    printf '%s\n' \
+      "Automatic APT config:  ${VPS_APT_PERIODIC_CONFIG}" \
+      "Automatic-update state: ${VPS_AUTO_UPDATE_STATE_DIR}" \
+      'The recorded update unit states and bundle-added kernel holds will be restored.'
+  fi
   if [[ "${has_state}" == "1" ]]; then
     printf 'The previous logrotate.timer enabled and active states will be restored.\n'
   else
@@ -115,6 +168,9 @@ vps_system_uninstall_main() {
   fi
 
   vps_system_uninstall_acquire_lock
+  if [[ "${has_auto_update_state}" == "1" ]]; then
+    vps_system_restore_auto_updates
+  fi
   systemctl disable --now vpsfiles-maintenance.timer >/dev/null 2>&1 || true
   vps_safe_remove_file_path "${VPS_MAINTENANCE_TIMER}"
   vps_safe_remove_file_path "${VPS_MAINTENANCE_SERVICE}"
