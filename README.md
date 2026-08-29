@@ -4,6 +4,7 @@ This repository contains standalone Debian/Ubuntu VPS script bundles for:
 
 - `wireguard-scripts`
 - `amnezia-scripts`
+- `adguardhome-scripts` (native AdGuard Home with an SSH-tunneled admin UI)
 - `xray-scripts`
 - `telemt-scripts`
 - `nginx-scripts` (standalone HTTPS fallback site for Xray REALITY)
@@ -37,6 +38,15 @@ sudo ./install.sh
 ```
 
 It derives bounded journal and coredump limits from the VPS resources, schedules safe daily cleanup, enables log rotation, and configures compressed zram swap when supported. See `system-scripts/README.md` for managed paths and behavior.
+
+The standalone AdGuard Home installer adds a native DNS filtering service without changing UFW, the VPS resolver, or any VPN/proxy client configuration:
+
+```bash
+cd adguardhome-scripts
+sudo ./install.sh
+```
+
+Its admin UI stays on `127.0.0.1:3000` for SSH-tunneled access. DNS listener addresses and WireGuard, AmneziaWG, Xray, or other consumer settings are configured manually. See `adguardhome-scripts/README.md` for private-listener guidance and retained-data uninstall behavior.
 
 When Xray is installed with an optional next-hop URI, routing is selected per client:
 
@@ -75,6 +85,7 @@ cd xray-scripts && sudo ./update.sh
 cd telemt-scripts && sudo ./update.sh
 cd tg-ws-scripts && sudo ./update.sh
 cd system-scripts && sudo ./update.sh
+cd adguardhome-scripts && sudo ./update.sh
 ```
 
 Protocol updates change only runtime components required by the selected bundle, preserve server configuration, keys, clients, endpoints, firewall rules, and sysctl state, and restart a service only when it was already active. Xray and Telemt automatically restore their previous runtime artifacts after a failed update and report successful rollback only after an originally active service is healthy again. TG WS Proxy builds a versioned image and automatically restores the previous Compose environment, image, and running/stopped container state if cutover fails. Set `TELEMT_VERSION=<version>` or `TG_WS_PROXY_VERSION=<version>` before the corresponding updater to request a specific release; the default is `latest`.

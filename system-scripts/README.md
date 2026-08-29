@@ -43,6 +43,44 @@ The updater runs `apt-get update` followed by `apt-get upgrade --with-new-pkgs`.
 
 System-wide APT package versions and dependency changes cannot be automatically downgraded after a failure. Create a provider snapshot before updating when full VPS rollback is required.
 
+### Manual security updates
+
+For a normal manual update, run:
+
+```bash
+sudo ./update.sh
+```
+
+This installs all eligible package updates, not only security updates. If you want to review and apply only the origins configured for `unattended-upgrades` (normally the Ubuntu security and ESM pockets), run it directly even while its automatic service and timer are disabled:
+
+```bash
+sudo apt-get update
+sudo unattended-upgrade --dry-run --verbose
+sudo unattended-upgrade --verbose
+```
+
+Review `/etc/apt/apt.conf.d/50unattended-upgrades` before relying on this as security-only behavior, because local configuration can enable additional origins. If the `unattended-upgrade` command is missing, install its package first:
+
+```bash
+sudo apt-get install unattended-upgrades
+```
+
+When the optional automatic-update lock is enabled, detected kernel meta packages remain held and are skipped by both methods. To include kernel security updates, first list the exact held package names:
+
+```bash
+apt-mark showhold | grep '^linux-'
+```
+
+Temporarily unhold only the kernel meta packages shown by that command, update, and then hold the same packages again. Package names vary by VPS image (`generic`, `virtual`, `aws`, `azure`, `gcp`, or HWE), so do not copy package names from another server. For example:
+
+```bash
+sudo apt-mark unhold linux-generic linux-image-generic linux-headers-generic
+sudo ./update.sh
+sudo apt-mark hold linux-generic linux-image-generic linux-headers-generic
+```
+
+Use the actual names from `apt-mark showhold`. If the updater reports that a reboot is required, schedule one so the updated kernel and libraries take effect.
+
 ## Uninstall
 
 ```bash

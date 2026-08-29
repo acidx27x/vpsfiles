@@ -37,14 +37,19 @@ teardown() {
 }
 
 @test "system configuration renderers apply bounded policies" {
+  local apt_periodic_config="${TEST_TMPDIR}/apt-periodic.conf"
   local journal_config="${TEST_TMPDIR}/journald.conf"
   local coredump_config="${TEST_TMPDIR}/coredump.conf"
   local zram_config="${TEST_TMPDIR}/zram.conf"
 
+  vps_system_render_apt_periodic_config > "${apt_periodic_config}"
   vps_system_render_journald_config 100 40 512 > "${journal_config}"
   vps_system_render_coredump_config 50 512 > "${coredump_config}"
   vps_system_render_zram_config > "${zram_config}"
 
+  assert_file_contains "${apt_periodic_config}" 'APT::Periodic::Enable "0";'
+  assert_file_contains "${apt_periodic_config}" 'APT::Periodic::Update-Package-Lists "0";'
+  assert_file_contains "${apt_periodic_config}" 'APT::Periodic::Unattended-Upgrade "0";'
   assert_file_contains "${journal_config}" "SystemMaxUse=100M"
   assert_file_contains "${journal_config}" "RuntimeMaxUse=40M"
   assert_file_contains "${journal_config}" "SystemKeepFree=512M"
@@ -54,6 +59,155 @@ teardown() {
   assert_file_contains "${coredump_config}" "MaxUse=50M"
   assert_file_contains "${zram_config}" "zram-size = min(ram / 2, 1024)"
   assert_file_contains "${zram_config}" "swap-priority = 100"
+}
+
+@test "Ubuntu detection and kernel meta-package detection are bounded" {
+  export VPS_OS_RELEASE="${TEST_TMPDIR}/os-release"
+  printf 'NAME=Ubuntu\nID=ubuntu\n' > "${VPS_OS_RELEASE}"
+  run vps_system_is_ubuntu
+  [ "${status}" -eq 0 ]
+  printf 'NAME=Debian\nID=debian\n' > "${VPS_OS_RELEASE}"
+  run vps_system_is_ubuntu
+  [ "${status}" -ne 0 ]
+
+  cat > "${TEST_TMPDIR}/bin/dpkg-query" <<'EOF'
+#!/usr/bin/env bash
+printf 'linux-generic\tii \tlinux-meta\n'
+printf 'linux-image-generic\tii \tlinux-meta\n'
+printf 'linux-headers-virtual-hwe-24.04\tii \tlinux-meta-hwe-6.8\n'
+printf 'linux-tools-generic\tii \tlinux-meta\n'
+printf 'linux-image-6.8.0-31-generic\tii \tlinux\n'
+printf 'linux-aws\trc \tlinux-meta-aws\n'
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/dpkg-query"
+  run vps_system_detect_kernel_meta_packages
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'linux-generic\nlinux-headers-virtual-hwe-24.04\nlinux-image-generic' ]
+}
+
+@test "automatic update disable is reversible and idempotent" {
+  local apt_config="${TEST_TMPDIR}/etc/apt/99-vpsfiles-disable-auto-updates"
+  local hold_log="${TEST_TMPDIR}/hold.log"
+  local holds="${TEST_TMPDIR}/holds"
+  local state_dir="${TEST_TMPDIR}/state"
+  local systemctl_log="${TEST_TMPDIR}/systemctl.log"
+  export VPS_APT_PERIODIC_CONFIG="${apt_config}"
+  export VPS_SYSTEM_STATE_DIR="${state_dir}"
+  export VPS_AUTO_UPDATE_STATE_DIR="${state_dir}/auto-updates"
+  export TEST_HOLD_LOG="${hold_log}"
+  export TEST_HOLDS="${holds}"
+  export TEST_SYSTEMCTL_LOG="${systemctl_log}"
+  export TEST_SYSTEMCTL_ACTIVE="${TEST_TMPDIR}/systemctl-active"
+  export TEST_SYSTEMCTL_MASKED="${TEST_TMPDIR}/systemctl-masked"
+  mkdir -p "${state_dir}"
+  printf 'linux-image-generic\n' > "${holds}"
+  : > "${TEST_SYSTEMCTL_ACTIVE}"
+  cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_SYSTEMCTL_LOG}"
+case "$*" in
+  "is-active --quiet apt-daily.timer")
+    [[ -e "${TEST_SYSTEMCTL_ACTIVE}" ]]
+    ;;
+  "is-active --quiet "*) exit 1 ;;
+  "is-enabled "*)
+    if [[ -e "${TEST_SYSTEMCTL_MASKED}" ]]; then
+      printf 'masked\n'
+    elif [[ "$*" == "is-enabled unattended-upgrades.service" ]]; then
+      printf 'masked\n'
+    else
+      printf 'enabled\n'
+    fi
+    ;;
+  "mask "*) : > "${TEST_SYSTEMCTL_MASKED}" ;;
+  "stop apt-daily.timer") rm -f "${TEST_SYSTEMCTL_ACTIVE}" ;;
+esac
+EOF
+  cat > "${TEST_TMPDIR}/bin/dpkg-query" <<'EOF'
+#!/usr/bin/env bash
+printf 'linux-generic\tii \tlinux-meta\n'
+printf 'linux-image-generic\tii \tlinux-meta\n'
+printf 'linux-tools-generic\tii \tlinux-meta\n'
+EOF
+  cat > "${TEST_TMPDIR}/bin/apt-mark" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  showhold) cat "${TEST_HOLDS}" ;;
+  hold)
+    printf '%s\n' "$2" >> "${TEST_HOLDS}"
+    printf '%s\n' "$2" >> "${TEST_HOLD_LOG}"
+    ;;
+  *) exit 1 ;;
+esac
+EOF
+  cat > "${TEST_TMPDIR}/bin/apt-config" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' \
+  'APT::Periodic::Enable "0";' \
+  'APT::Periodic::Update-Package-Lists "0";' \
+  'APT::Periodic::Unattended-Upgrade "0";'
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/"*
+  load_system_install
+  run vps_system_disable_auto_updates
+  [ "${status}" -eq 0 ]
+  assert_file_contains "${apt_config}" 'APT::Periodic::Enable "0";'
+  [ "$(cat "${hold_log}")" = "linux-generic" ]
+  [ "$(cat "${VPS_AUTO_UPDATE_STATE_DIR}/kernel-holds-added")" = "linux-generic" ]
+  [ "$(cat "${VPS_AUTO_UPDATE_STATE_DIR}/units/unattended-upgrades.service/was-masked")" = "1" ]
+  [ "$(cat "${VPS_AUTO_UPDATE_STATE_DIR}/units/apt-daily.timer/was-active")" = "1" ]
+  assert_file_contains "${systemctl_log}" "stop apt-daily.timer"
+
+  # shellcheck disable=SC2317 # Test state is owned by the unprivileged test process.
+  vps_system_validate_auto_update_state() {
+    return 0
+  }
+  run vps_system_disable_auto_updates
+  [ "${status}" -eq 0 ]
+  [ "$(wc -l < "${hold_log}")" -eq 1 ]
+}
+
+@test "automatic update restore preserves pre-existing masks and holds" {
+  local apt_config="${TEST_TMPDIR}/apt-periodic.conf"
+  local apt_mark_log="${TEST_TMPDIR}/apt-mark.log"
+  local state_dir="${TEST_TMPDIR}/auto-updates"
+  local systemctl_log="${TEST_TMPDIR}/restore-systemctl.log"
+  local unit=""
+  export VPS_APT_PERIODIC_CONFIG="${apt_config}"
+  export VPS_AUTO_UPDATE_STATE_DIR="${state_dir}"
+  export TEST_APT_MARK_LOG="${apt_mark_log}"
+  export TEST_SYSTEMCTL_LOG="${systemctl_log}"
+  mkdir -p "${state_dir}/units"
+  printf '%s\n' "${VPS_SYSTEM_MANAGED_MARKER}" > "${apt_config}"
+  printf 'linux-generic\n' > "${state_dir}/kernel-holds-added"
+  for unit in "${VPS_SYSTEM_AUTO_UPDATE_UNITS[@]}"; do
+    mkdir -p "${state_dir}/units/${unit}"
+    printf '0\n' > "${state_dir}/units/${unit}/was-masked"
+    printf '0\n' > "${state_dir}/units/${unit}/was-active"
+  done
+  printf '1\n' > "${state_dir}/units/unattended-upgrades.service/was-masked"
+  printf '1\n' > "${state_dir}/units/apt-daily.timer/was-active"
+  cat > "${TEST_TMPDIR}/bin/apt-mark" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  showhold) printf 'linux-generic\npreexisting-hold\n' ;;
+  unhold) printf '%s\n' "$2" >> "${TEST_APT_MARK_LOG}" ;;
+  *) exit 1 ;;
+esac
+EOF
+  cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TEST_SYSTEMCTL_LOG}"
+EOF
+  chmod +x "${TEST_TMPDIR}/bin/"*
+  load_system_uninstall
+  run vps_system_restore_auto_updates
+  [ "${status}" -eq 0 ]
+  [ ! -e "${apt_config}" ]
+  [ "$(cat "${apt_mark_log}")" = "linux-generic" ]
+  assert_file_not_contains "${systemctl_log}" "unmask unattended-upgrades.service"
+  assert_file_contains "${systemctl_log}" "unmask apt-daily.timer"
+  assert_file_contains "${systemctl_log}" "start apt-daily.timer"
 }
 
 @test "system units schedule low-priority persistent daily cleanup" {
