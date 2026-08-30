@@ -11,6 +11,8 @@ VPS_MAINTENANCE_BIN="${VPS_MAINTENANCE_BIN:-/usr/local/sbin/vpsfiles-maintenance
 VPS_MAINTENANCE_SERVICE="${VPS_MAINTENANCE_SERVICE:-/etc/systemd/system/vpsfiles-maintenance.service}"
 VPS_MAINTENANCE_TIMER="${VPS_MAINTENANCE_TIMER:-/etc/systemd/system/vpsfiles-maintenance.timer}"
 VPS_SYSTEM_STATE_DIR="${VPS_SYSTEM_STATE_DIR:-/var/lib/vpsfiles-system}"
+VPS_FAIL2BAN_JAIL_CONFIG="${VPS_FAIL2BAN_JAIL_CONFIG:-/etc/fail2ban/jail.d/60-vpsfiles.local}"
+VPS_FAIL2BAN_STATE_DIR="${VPS_FAIL2BAN_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/fail2ban}"
 VPS_MAINTENANCE_LOCK_FILE="${VPS_MAINTENANCE_LOCK_FILE:-/run/lock/vpsfiles-maintenance.lock}"
 VPS_APT_PERIODIC_CONFIG="${VPS_APT_PERIODIC_CONFIG:-/etc/apt/apt.conf.d/99-vpsfiles-disable-auto-updates}"
 VPS_AUTO_UPDATE_STATE_DIR="${VPS_AUTO_UPDATE_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/auto-updates}"
@@ -31,6 +33,7 @@ vps_system_uninstall_validate() {
     "${VPS_JOURNALD_CONFIG}" \
     "${VPS_COREDUMP_CONFIG}" \
     "${VPS_ZRAM_CONFIG}" \
+    "${VPS_FAIL2BAN_JAIL_CONFIG}" \
     "${VPS_MAINTENANCE_BIN}" \
     "${VPS_MAINTENANCE_SERVICE}" \
     "${VPS_MAINTENANCE_TIMER}"; do
@@ -38,6 +41,7 @@ vps_system_uninstall_validate() {
     vps_system_require_managed_or_absent "${path}"
   done
   vps_system_validate_state_dir "${VPS_SYSTEM_STATE_DIR}"
+  vps_system_validate_fail2ban_state "${VPS_FAIL2BAN_STATE_DIR}"
   if [[ -d "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
     [[ "${VPS_APT_PERIODIC_CONFIG}" == /* && "${VPS_APT_PERIODIC_CONFIG}" != "/" ]] \
       || vps_die "managed APT periodic configuration path is unsafe: ${VPS_APT_PERIODIC_CONFIG}"
@@ -107,9 +111,16 @@ vps_system_restore_auto_updates() {
 
 vps_system_uninstall_main() {
   local has_auto_update_state=0
+  local has_fail2ban_state=0
   local has_state=0
+  local fail2ban_installed_by_bundle=""
+  local fail2ban_package_installed=0
+  local fail2ban_was_active=""
+  local fail2ban_was_enabled=""
+  local fail2ban_was_masked=""
   local logrotate_was_active=""
   local logrotate_was_enabled=""
+  local remove_fail2ban_package=0
   local remove_zram_package=0
   local zram_active=0
   local zram_package_installed_by_bundle=""
@@ -124,6 +135,24 @@ vps_system_uninstall_main() {
   if [[ -d "${VPS_AUTO_UPDATE_STATE_DIR}" ]]; then
     has_auto_update_state=1
     vps_require_commands apt-mark
+  fi
+  if [[ -d "${VPS_FAIL2BAN_STATE_DIR}" ]]; then
+    has_fail2ban_state=1
+    fail2ban_installed_by_bundle="$(vps_system_read_binary_state \
+      "${VPS_FAIL2BAN_STATE_DIR}/package-installed-by-bundle")"
+    fail2ban_was_enabled="$(vps_system_read_binary_state \
+      "${VPS_FAIL2BAN_STATE_DIR}/service-was-enabled")"
+    fail2ban_was_active="$(vps_system_read_binary_state \
+      "${VPS_FAIL2BAN_STATE_DIR}/service-was-active")"
+    fail2ban_was_masked="$(vps_system_read_binary_state \
+      "${VPS_FAIL2BAN_STATE_DIR}/service-was-masked")"
+  fi
+  if vps_system_package_is_installed fail2ban; then
+    fail2ban_package_installed=1
+  fi
+  if [[ "${fail2ban_installed_by_bundle}" == "1" \
+    && "${fail2ban_package_installed}" == "1" ]]; then
+    remove_fail2ban_package=1
   fi
   if [[ -d "${VPS_SYSTEM_STATE_DIR}" ]]; then
     has_state=1
@@ -143,10 +172,24 @@ vps_system_uninstall_main() {
     "  Journal limits:       ${VPS_JOURNALD_CONFIG}" \
     "  Coredump limits:      ${VPS_COREDUMP_CONFIG}" \
     "  Zram limits:          ${VPS_ZRAM_CONFIG}" \
+    "  Fail2ban SSH jail:    ${VPS_FAIL2BAN_JAIL_CONFIG}" \
+    "  Fail2ban state:       ${VPS_FAIL2BAN_STATE_DIR}" \
     "  Maintenance command:  ${VPS_MAINTENANCE_BIN}" \
     "  Maintenance units:    ${VPS_MAINTENANCE_SERVICE}, ${VPS_MAINTENANCE_TIMER}" \
     "  Installer state:      ${VPS_SYSTEM_STATE_DIR}" \
+    "  Fail2ban removal:     $([[ "${remove_fail2ban_package}" == "1" ]] && printf yes || printf no)" \
     "  Zram package removal: $([[ "${remove_zram_package}" == "1" ]] && printf yes || printf no)"
+  if [[ "${has_fail2ban_state}" == "1" && "${fail2ban_installed_by_bundle}" == "0" \
+    && "${fail2ban_package_installed}" == "1" ]]; then
+    printf '%s\n' \
+      'The remaining Fail2ban configuration will be validated.' \
+      "Its recorded service state will be restored (enabled=${fail2ban_was_enabled}, active=${fail2ban_was_active}, masked=${fail2ban_was_masked})."
+  elif [[ "${has_fail2ban_state}" == "1" && "${fail2ban_installed_by_bundle}" == "0" ]]; then
+    printf 'The pre-existing Fail2ban package is no longer installed; no service change will be made.\n'
+  elif [[ "${has_fail2ban_state}" == "0" ]]; then
+    printf 'No Fail2ban baseline state was found; its package and service will be left unchanged.\n'
+  fi
+  printf 'The shared python3-systemd package will be retained; autoremove will not run.\n'
   if [[ "${has_auto_update_state}" == "1" ]]; then
     printf '%s\n' \
       "Automatic APT config:  ${VPS_APT_PERIODIC_CONFIG}" \
@@ -168,6 +211,7 @@ vps_system_uninstall_main() {
   fi
 
   vps_system_uninstall_acquire_lock
+  vps_system_uninstall_fail2ban "${VPS_FAIL2BAN_JAIL_CONFIG}" "${VPS_FAIL2BAN_STATE_DIR}"
   if [[ "${has_auto_update_state}" == "1" ]]; then
     vps_system_restore_auto_updates
   fi
@@ -197,6 +241,7 @@ vps_system_uninstall_main() {
     printf 'Reboot the VPS when convenient so the active zram device is released without forcing swapoff.\n'
   fi
   printf 'Shared packages kmod, logrotate, and util-linux were retained.\n'
+  printf 'The shared python3-systemd package was retained.\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

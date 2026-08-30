@@ -16,6 +16,8 @@ VPS_ZRAM_DEVICE_PATH="${VPS_ZRAM_DEVICE_PATH:-/sys/block/zram0}"
 VPS_ZRAM_MAIN_CONFIG="${VPS_ZRAM_MAIN_CONFIG:-/etc/systemd/zram-generator.conf}"
 VPS_ZRAM_CONFIG_DIR="${VPS_ZRAM_CONFIG_DIR:-/etc/systemd/zram-generator.conf.d}"
 VPS_SYSTEM_STATE_DIR="${VPS_SYSTEM_STATE_DIR:-/var/lib/vpsfiles-system}"
+VPS_FAIL2BAN_JAIL_CONFIG="${VPS_FAIL2BAN_JAIL_CONFIG:-/etc/fail2ban/jail.d/60-vpsfiles.local}"
+VPS_FAIL2BAN_STATE_DIR="${VPS_FAIL2BAN_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/fail2ban}"
 VPS_APT_PERIODIC_CONFIG="${VPS_APT_PERIODIC_CONFIG:-/etc/apt/apt.conf.d/99-vpsfiles-disable-auto-updates}"
 VPS_AUTO_UPDATE_STATE_DIR="${VPS_AUTO_UPDATE_STATE_DIR:-${VPS_SYSTEM_STATE_DIR}/auto-updates}"
 
@@ -41,6 +43,7 @@ vps_system_validate_paths() {
     "${VPS_JOURNALD_CONFIG}" \
     "${VPS_COREDUMP_CONFIG}" \
     "${VPS_ZRAM_CONFIG}" \
+    "${VPS_FAIL2BAN_JAIL_CONFIG}" \
     "${VPS_MAINTENANCE_BIN}" \
     "${VPS_MAINTENANCE_SERVICE}" \
     "${VPS_MAINTENANCE_TIMER}"; do
@@ -48,6 +51,7 @@ vps_system_validate_paths() {
     vps_system_require_managed_or_absent "${path}"
   done
   vps_system_validate_state_dir "${VPS_SYSTEM_STATE_DIR}"
+  vps_system_validate_fail2ban_state "${VPS_FAIL2BAN_STATE_DIR}"
 }
 
 vps_system_initialize_state() {
@@ -301,9 +305,11 @@ vps_system_main() {
     "Runtime journal cap:           ${runtime_limit_mib} MiB" \
     "Journal/coredump free reserve: ${keep_free_mib} MiB" \
     "Coredump cap:                  ${coredump_limit_mib} MiB" \
+    'Fail2ban SSH policy:           5 failures / 10 min -> 1h all-ports ban' \
     '' \
     'This will install bounded journal and coredump settings, enable daily safe cleanup,' \
-    'enable log rotation, and configure compressed zram swap when the host supports it.' \
+    'enable log rotation, configure compressed zram swap when the host supports it,' \
+    'and enable Fail2ban SSH protection with all-ports bans after repeated failures.' \
     'It will not remove packages, application data, user files, or unrelated Docker data.'
   if ! vps_confirm "Continue?"; then
     printf 'Aborted before making changes.\n'
@@ -329,11 +335,16 @@ vps_system_main() {
     vps_system_validate_auto_update_paths
   fi
   vps_system_initialize_state
-  vps_install_packages kmod logrotate util-linux
+  vps_system_initialize_fail2ban_state "${VPS_FAIL2BAN_STATE_DIR}"
+  vps_install_packages kmod logrotate util-linux fail2ban python3-systemd
   if [[ "${disable_auto_updates}" == "1" ]]; then
     vps_system_disable_auto_updates
   fi
-  vps_require_commands apt-cache flock journalctl modprobe swapon systemd-analyze systemd-detect-virt systemd-tmpfiles
+  vps_require_commands apt-cache fail2ban-client flock journalctl modprobe sleep swapon systemd-analyze systemd-detect-virt systemd-tmpfiles
+
+  vps_system_install_rendered_file \
+    "${VPS_FAIL2BAN_JAIL_CONFIG}" 644 vps_system_render_fail2ban_jail
+  vps_system_activate_fail2ban
 
   vps_system_install_rendered_file \
     "${VPS_JOURNALD_CONFIG}" 644 vps_system_render_journald_config \

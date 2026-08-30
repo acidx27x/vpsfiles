@@ -9,7 +9,7 @@ This repository contains standalone Debian/Ubuntu VPS script bundles for:
 - `telemt-scripts`
 - `nginx-scripts` (standalone HTTPS fallback site for Xray REALITY)
 - `tg-ws-scripts` (Docker-based TG WS Proxy with IPv4/IPv6 listeners)
-- `system-scripts` (bounded logs, safe cleanup, zram, and host package updates)
+- `system-scripts` (bounded logs, safe cleanup, zram, Fail2ban SSH protection, and host package updates)
 
 Each bundle keeps its existing public commands, for example:
 
@@ -37,7 +37,7 @@ cd system-scripts
 sudo ./install.sh
 ```
 
-It derives bounded journal and coredump limits from the VPS resources, schedules safe daily cleanup, enables log rotation, and configures compressed zram swap when supported. See `system-scripts/README.md` for managed paths and behavior.
+It derives bounded journal and coredump limits from the VPS resources, schedules safe daily cleanup, enables log rotation, configures compressed zram swap when supported, and enables a journal-backed Fail2ban `sshd` jail. SSH failures can trigger a one-hour all-ports ban for the source address. See `system-scripts/README.md` for the thresholds, status and unban commands, managed paths, and reversible uninstall behavior.
 
 The standalone AdGuard Home installer adds a native DNS filtering service backed by local recursive Unbound without changing UFW, the VPS resolver, or any VPN/proxy client configuration:
 

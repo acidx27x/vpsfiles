@@ -408,18 +408,21 @@ EOF
   export VPS_JOURNALD_CONFIG="${TEST_TMPDIR}/etc/journald.conf"
   export VPS_COREDUMP_CONFIG="${TEST_TMPDIR}/etc/coredump.conf"
   export VPS_ZRAM_CONFIG="${TEST_TMPDIR}/etc/zram.conf"
+  export VPS_FAIL2BAN_JAIL_CONFIG="${TEST_TMPDIR}/etc/fail2ban/60-vpsfiles.local"
   export VPS_MAINTENANCE_BIN="${TEST_TMPDIR}/usr/vpsfiles-maintenance"
   export VPS_MAINTENANCE_SERVICE="${TEST_TMPDIR}/etc/vpsfiles-maintenance.service"
   export VPS_MAINTENANCE_TIMER="${TEST_TMPDIR}/etc/vpsfiles-maintenance.timer"
   export VPS_SYSTEM_STATE_DIR="${TEST_TMPDIR}/state"
+  export VPS_FAIL2BAN_STATE_DIR="${VPS_SYSTEM_STATE_DIR}/fail2ban"
   export TEST_UNINSTALL_APT_LOG="${apt_log}"
   export TEST_UNINSTALL_SYSTEMCTL_LOG="${systemctl_log}"
 
-  mkdir -p "${TEST_TMPDIR}/etc" "${TEST_TMPDIR}/usr" "${VPS_SYSTEM_STATE_DIR}"
+  mkdir -p "${TEST_TMPDIR}/etc/fail2ban" "${TEST_TMPDIR}/usr" "${VPS_SYSTEM_STATE_DIR}"
   for path in \
     "${VPS_JOURNALD_CONFIG}" \
     "${VPS_COREDUMP_CONFIG}" \
     "${VPS_ZRAM_CONFIG}" \
+    "${VPS_FAIL2BAN_JAIL_CONFIG}" \
     "${VPS_MAINTENANCE_BIN}" \
     "${VPS_MAINTENANCE_SERVICE}" \
     "${VPS_MAINTENANCE_TIMER}"; do
@@ -430,6 +433,12 @@ EOF
   printf '1\n' > "${VPS_SYSTEM_STATE_DIR}/logrotate-was-active"
   printf '0\n' > "${VPS_SYSTEM_STATE_DIR}/zram-package-was-installed"
   printf '1\n' > "${VPS_SYSTEM_STATE_DIR}/zram-package-installed-by-bundle"
+  mkdir -p "${VPS_FAIL2BAN_STATE_DIR}"
+  printf '1\n' > "${VPS_FAIL2BAN_STATE_DIR}/state-version"
+  printf '0\n' > "${VPS_FAIL2BAN_STATE_DIR}/package-installed-by-bundle"
+  printf '0\n' > "${VPS_FAIL2BAN_STATE_DIR}/service-was-enabled"
+  printf '1\n' > "${VPS_FAIL2BAN_STATE_DIR}/service-was-active"
+  printf '0\n' > "${VPS_FAIL2BAN_STATE_DIR}/service-was-masked"
 
   cat > "${TEST_TMPDIR}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -442,6 +451,10 @@ EOF
   cat > "${TEST_TMPDIR}/bin/apt-get" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${TEST_UNINSTALL_APT_LOG}"
+EOF
+  cat > "${TEST_TMPDIR}/bin/fail2ban-client" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "-t" ]]
 EOF
   cat > "${TEST_TMPDIR}/bin/swapon" <<'EOF'
 #!/usr/bin/env bash
@@ -461,6 +474,10 @@ EOF
   vps_system_validate_state_dir() {
     return 0
   }
+  # shellcheck disable=SC2317 # Test state is owned by the unprivileged test process.
+  vps_system_validate_fail2ban_state() {
+    return 0
+  }
 
   run vps_system_uninstall_main
   [ "${status}" -eq 0 ]
@@ -468,6 +485,7 @@ EOF
     "${VPS_JOURNALD_CONFIG}" \
     "${VPS_COREDUMP_CONFIG}" \
     "${VPS_ZRAM_CONFIG}" \
+    "${VPS_FAIL2BAN_JAIL_CONFIG}" \
     "${VPS_MAINTENANCE_BIN}" \
     "${VPS_MAINTENANCE_SERVICE}" \
     "${VPS_MAINTENANCE_TIMER}" \
@@ -479,6 +497,13 @@ EOF
   assert_file_contains "${systemctl_log}" "restart systemd-journald"
   assert_file_contains "${systemctl_log}" "disable logrotate.timer"
   assert_file_contains "${systemctl_log}" "start logrotate.timer"
+  assert_file_contains "${systemctl_log}" "disable fail2ban.service"
+  assert_file_contains "${systemctl_log}" "restart fail2ban.service"
+  [[ "${output}" == *"Fail2ban SSH jail"* ]]
+  [[ "${output}" == *"Fail2ban removal:     no"* ]]
+  [[ "${output}" == *"remaining Fail2ban configuration will be validated"* ]]
+  [[ "${output}" == *"enabled=0, active=1, masked=0"* ]]
+  [[ "${output}" == *"python3-systemd package will be retained"* ]]
   [[ "${output}" == *"Reboot the VPS"* ]]
   [[ "${output}" == *"kmod, logrotate, and util-linux were retained"* ]]
 }
