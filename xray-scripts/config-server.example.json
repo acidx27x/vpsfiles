@@ -31,7 +31,7 @@
           ]
         },
         "sockopt": {
-          "tcpFastOpen": true,
+          "tcpFastOpen": false,
           "tcpNoDelay": true
         }
       },
@@ -55,7 +55,7 @@
       },
       "streamSettings": {
         "sockopt": {
-          "tcpFastOpen": true,
+          "tcpFastOpen": false,
           "tcpNoDelay": true
         }
       }

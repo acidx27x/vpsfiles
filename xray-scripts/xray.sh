@@ -259,7 +259,7 @@ xray_render_next_hop_config() {
           "spiderX": $spider_x
         },
         "sockopt": {
-          "tcpFastOpen": true,
+          "tcpFastOpen": false,
           "tcpNoDelay": true
         }
       }
