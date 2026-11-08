@@ -195,6 +195,13 @@ Each mutation keeps a private numbered backup under `install-backups/web-*`, wit
 a path manifest and previous service state. Failures restore that operation's
 files and verify services, Telemt readiness and HTTPS where applicable. If recovery
 also fails, the command explicitly reports both failures and the backup directory.
+Failure messages identify the activation stage and a credential-free error
+summary, also saved in `failure.json`. Captured subprocess output, when available,
+is saved separately in private `command-output.log`; review it locally and do not
+share it unredacted. Rollback stops Telemt before restoring a configuration with
+different WEB listener inventory. Public HTTPS checks tolerate a bounded startup
+delay after Xray's systemd unit becomes active; invalid HTTP/decoy responses still
+fail immediately.
 APT package changes during a separate binary update are outside this rollback.
 WEB-aware binary updates check runtime readiness before accepting the update.
 

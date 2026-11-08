@@ -50,6 +50,127 @@ server {
 
 
 class WebTests(unittest.TestCase):
+    def test_public_probe_waits_for_xray_socket_after_systemd_reports_active(self):
+        install = web.Installation()
+        with (
+            patch.object(
+                install,
+                "probe_public",
+                side_effect=[subprocess.CalledProcessError(7, ["curl"]), None],
+            ) as probe,
+            patch.object(web.time, "sleep") as sleep,
+        ):
+            install.wait_public_ready()
+        self.assertEqual(probe.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_public_probe_does_not_retry_permanent_http_or_decoy_failures(self):
+        install = web.Installation()
+        for error in (subprocess.CalledProcessError(22, ["curl"]), web.CheckError("HTTP 404")):
+            with (
+                patch.object(install, "probe_public", side_effect=error) as probe,
+                patch.object(web.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(type(error)):
+                    install.wait_public_ready()
+                probe.assert_called_once()
+                sleep.assert_not_called()
+
+    def test_public_probe_preserves_final_startup_error_after_bounded_retries(self):
+        install = web.Installation()
+        error = subprocess.CalledProcessError(35, ["curl"], output="private diagnostic")
+        with (
+            patch.object(install, "probe_public", side_effect=error) as probe,
+            patch.object(web.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                install.wait_public_ready()
+            self.assertIs(caught.exception, error)
+            self.assertEqual(probe.call_count, 10)
+            self.assertEqual(sleep.call_count, 9)
+
+    def test_transaction_reports_stage_and_keeps_subprocess_output_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = web.Installation()
+            target = Path(directory) / "nginx.conf"
+            target.write_bytes(b"original")
+            install.nginx = target
+            secret_output = "invalid configuration with secret=do-not-print"
+            with (
+                patch.object(install, "backup_root", return_value=Path(directory)),
+                patch.object(web, "run", side_effect=subprocess.CalledProcessError(1, ["nginx", "-t"], secret_output)),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "validating Nginx configuration: nginx exited with code 1"
+                ) as caught:
+                    install.transaction({target: b"candidate"}, [])
+            self.assertNotIn("do-not-print", str(caught.exception))
+            (backup,) = Path(directory).glob("web-*")
+            failure = json.loads((backup / "failure.json").read_text())
+            self.assertEqual(failure["stage"], "validating Nginx configuration")
+            self.assertNotIn("do-not-print", json.dumps(failure))
+            self.assertEqual((backup / "command-output.log").read_text(), secret_output)
+            self.assertEqual((backup / "command-output.log").stat().st_mode & 0o777, 0o600)
+            self.assertEqual(target.read_bytes(), b"original")
+
+    def test_failure_diagnostic_write_error_does_not_prevent_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = web.Installation()
+            target = Path(directory) / "config"
+            target.write_bytes(b"original")
+            write = web.atomic
+
+            def write_without_diagnostics(path, data, mode=None):
+                if path.name == "failure.json":
+                    raise PermissionError("diagnostic write failed")
+                write(path, data, mode)
+
+            with (
+                patch.object(install, "backup_root", return_value=Path(directory)),
+                patch.object(install, "artifacts", side_effect=ValueError("API failure")),
+                patch.object(web, "atomic", side_effect=write_without_diagnostics),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "fetching client links.*previous files and services restored"
+                ):
+                    install.transaction({target: b"candidate"}, [])
+            self.assertEqual(target.read_bytes(), b"original")
+
+    def test_rollback_stops_web_process_before_restoring_native_only_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = web.Installation()
+            target = Path(directory) / "telemt.toml"
+            target.write_text(BASE)
+            install.telemt = target
+            candidate = web.managed(BASE, web.web_block(tomllib.loads(BASE), "xbubax.ru", "45.87.246.142:443"))
+            events = []
+
+            def command(*args):
+                events.append(args)
+                if args == ("systemctl", "stop", "telemt"):
+                    self.assertEqual(target.read_text(), candidate)
+                if args == ("systemctl", "restart", "telemt") and len(events) > 1:
+                    self.assertEqual(target.read_text(), BASE)
+                return ""
+
+            with (
+                patch.object(install, "backup_root", return_value=Path(directory)),
+                patch.object(install, "wait_ready", side_effect=[web.CheckError("failed"), None]),
+                patch.object(web.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)),
+                patch.object(web, "run", side_effect=command),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "checking service telemt readiness"):
+                    install.transaction({target: candidate.encode()}, ["telemt"])
+            self.assertEqual(
+                events,
+                [
+                    ("systemctl", "restart", "telemt"),
+                    ("systemctl", "stop", "telemt"),
+                    ("systemctl", "restart", "telemt"),
+                    ("systemctl", "is-active", "--quiet", "telemt"),
+                ],
+            )
+
     def test_path_link_upstream_vector(self):
         self.assertEqual(
             web.web_link("xbubax.ru/telegram/web", "000102030405060708090a0b0c0d0e0f"),

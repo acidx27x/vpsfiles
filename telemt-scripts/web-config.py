@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import tomllib
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
@@ -37,6 +38,22 @@ def require(condition: object, message: str) -> None:
 
 def run(*args: str) -> str:
     return subprocess.check_output(args, stderr=subprocess.STDOUT, text=True, timeout=20).strip()
+
+
+def failure_summary(error: BaseException) -> str:
+    """Describe failures without echoing arguments, response bodies or config values."""
+    if isinstance(error, CheckError):
+        return str(error)
+    if isinstance(error, subprocess.CalledProcessError):
+        program = Path(error.cmd[0]).name if isinstance(error.cmd, (list, tuple)) else "command"
+        return f"{program} exited with code {error.returncode}"
+    if isinstance(error, subprocess.TimeoutExpired):
+        return "command timed out"
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP status {error.code}"
+    if isinstance(error, OSError):
+        return f"{type(error).__name__} (errno {error.errno})"
+    return type(error).__name__
 
 
 def state(bundle: str, name: str, default: str) -> str:
@@ -231,6 +248,7 @@ class Installation:
             save(path)
         (backup / "manifest.json").write_text(json.dumps({str(p): i for i, p in enumerate(original, 1)}))
         (backup / "services.json").write_text(json.dumps(active))
+        stage = "writing prepared files"
         try:
             for path, value in changes.items():
                 if not path.parent.exists():
@@ -242,19 +260,46 @@ class Installation:
                     path.unlink(missing_ok=True)
                     continue
                 atomic(path, value, 0o644 if str(path).startswith("/var/lib/telemt/public/") else None)
-            run("nginx", "-t") if self.nginx in changes else None
+            if self.nginx in changes:
+                stage = "validating Nginx configuration"
+                run("nginx", "-t")
             for unit in services:
+                stage = f"activating service {unit}"
                 run("systemctl", "reload" if unit == "nginx" else "restart", unit)
+                stage = f"checking service {unit} readiness"
                 self.wait_ready() if unit == self.services[0] else run("systemctl", "is-active", "--quiet", unit)
             if public_probe:
-                self.probe_public()
+                stage = "checking public HTTPS and WEB routes"
+                self.wait_public_ready()
+            stage = "fetching client links from Telemt API"
             for path, value in self.artifacts().items():
+                stage = "writing client link files"
                 save(path)
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 atomic(path, value, 0o600)
             (backup / "manifest.json").write_text(json.dumps({str(p): i for i, p in enumerate(original, 1)}))
-        except BaseException:
+        except BaseException as error:
             failed = False
+            detail = failure_summary(error)
+            try:
+                atomic(backup / "failure.json", json.dumps({"stage": stage, "error": detail}).encode(), 0o600)
+                output = getattr(error, "output", None)
+                if output:
+                    atomic(
+                        backup / "command-output.log",
+                        output.encode() if isinstance(output, str) else output,
+                        0o600,
+                    )
+            except OSError:
+                # Diagnostic storage must never prevent restoration.
+                pass
+            if self.telemt in changes and self.services[0] in services:
+                try:
+                    # Listener inventory belongs to the process. Do not let its
+                    # watcher consume a restored config with incompatible vhosts.
+                    run("systemctl", "stop", self.services[0])
+                except (OSError, subprocess.SubprocessError):
+                    failed = True
             for index, (path, value) in enumerate(original.items(), 1):
                 try:
                     if value is None:
@@ -282,12 +327,29 @@ class Installation:
                     if self.services[0] in active and active[self.services[0]]:
                         self.wait_ready()
                     if public_probe:
-                        self.probe_public()
+                        self.wait_public_ready()
                 except (OSError, ValueError, subprocess.SubprocessError):
                     failed = True
             if failed:
-                raise RuntimeError(f"Operation AND rollback failed; inspect services. Backup: {backup}") from None
-            raise RuntimeError(f"Operation failed; previous files and services restored. Backup: {backup}") from None
+                raise RuntimeError(
+                    f"Operation AND rollback failed at {stage}: {detail}; inspect services. Backup: {backup}"
+                ) from None
+            raise RuntimeError(
+                f"Operation failed at {stage}: {detail}; previous files and services restored. Backup: {backup}"
+            ) from None
+
+    def wait_public_ready(self) -> None:
+        """Allow a simple systemd service to bind before probing its TLS endpoint."""
+        for attempt in range(10):
+            try:
+                self.probe_public()
+                return
+            except subprocess.CalledProcessError as error:
+                # curl: refused connection, TLS startup failure, empty reply, reset.
+                # HTTP/decoy validation failures remain immediate failures.
+                if error.returncode not in (7, 35, 52, 56) or attempt == 9:
+                    raise
+                time.sleep(1)
 
     def probe_public(self) -> None:
         host, address = self.endpoint()
@@ -308,7 +370,7 @@ class Installation:
                 code = run(*options, "--output", "/dev/null", "--write-out", "%{http_code}", f"https://{host}{path}")
                 require(
                     code in ("200", "404") and (path != "/telegram/web" or code == "404"),
-                    "Unexpected WEB decoy response or redirect",
+                    f"Unexpected WEB decoy response for {path}: HTTP {code}",
                 )
 
     def backup_root(self) -> Path:
@@ -318,13 +380,15 @@ class Installation:
         return directory
 
     def wait_ready(self) -> None:
+        last_error = None
         for _ in range(10):
             try:
                 self.ready()
                 return
-            except (OSError, ValueError, subprocess.SubprocessError):
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                last_error = error
                 time.sleep(1)
-        raise ValueError("Telemt did not become ready")
+        raise CheckError(f"Telemt did not become ready: {failure_summary(last_error)}") from None
 
     def endpoint(self) -> tuple[str, str]:
         text = self.nginx.read_text()
