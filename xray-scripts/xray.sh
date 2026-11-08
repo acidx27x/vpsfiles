@@ -580,7 +580,7 @@ xray_write_client_artifacts() {
   printf '%s\n' "${short_id}" > "${client_dir}/${client_name}.short-id"
 
   uri_host="$(vps_format_uri_host "${endpoint}")"
-  uri="vless://${client_uuid}@${uri_host}:${port}?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&sni=$(vps_url_encode "${server_name}")&fp=firefox&pbk=$(vps_url_encode "${public_key}")&sid=${short_id}&spx=%2F#$(vps_url_encode "${client_name}")"
+  uri="vless://${client_uuid}@${uri_host}:${port}?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&sni=$(vps_url_encode "${server_name}")&fp=chrome&pbk=$(vps_url_encode "${public_key}")&sid=${short_id}&spx=%2F#$(vps_url_encode "${client_name}")"
   printf '%s\n' "${uri}" > "${client_dir}/vless-${client_name}.txt"
 
   chmod 600 "${client_dir}/${client_name}.uuid" "${client_dir}/${client_name}.short-id" "${client_dir}/vless-${client_name}.txt"

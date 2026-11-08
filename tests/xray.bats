@@ -148,6 +148,21 @@ EOF
   [ -f "${CLIENTS_DIR}/phone/vless-phone.txt" ]
   [ ! -e "${CLIENTS_DIR}/phone/xray-client-phone.json" ]
   [ ! -e "${CLIENTS_DIR}/phone/vless-phone-qrcode.txt" ]
+  [ "$(<"${CLIENTS_DIR}/phone/phone.uuid")" = "uuid-1" ]
+  [ "$(<"${CLIENTS_DIR}/phone/phone.short-id")" = "sid-1" ]
+  [ "$(<"${CLIENTS_DIR}/phone/vless-phone.txt")" = "vless://uuid-1@198.51.100.10:443?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&sni=www.example.com&fp=chrome&pbk=public-key&sid=sid-1&spx=%2F#phone" ]
+}
+
+@test "xray preserves a pinned Chrome next-hop fingerprint independently of client generation" {
+  local rendered="${TEST_TMPDIR}/chrome-next-hop.json"
+  local uri="vless://123e4567-e89b-12d3-a456-426614174000@exit.example.com:443?type=raw&security=reality&encryption=none&flow=xtls-rprx-vision&sni=nl.example.com&fp=hellochrome_120&pbk=public_key-1&sid=0123456789abcdef&spx=%2F#relay"
+
+  xray_parse_next_hop_uri "${uri}"
+  xray_render_next_hop_config "${XRAY_CONFIG}" "${rendered}"
+  jq -e '.outbounds[] | select(.tag == "next-hop") |
+    .streamSettings.realitySettings.fingerprint == "hellochrome_120"' "${rendered}" >/dev/null
+  [ "$(jq -c '.inbounds' "${rendered}")" = "$(jq -c '.inbounds' "${XRAY_CONFIG}")" ]
+  [ "$(jq -c '.routing' "${rendered}")" = "$(jq -c '.routing' "${XRAY_CONFIG}")" ]
 }
 
 @test "xray server template remains a direct exit by default" {

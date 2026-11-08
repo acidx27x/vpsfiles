@@ -41,7 +41,7 @@ Transport:      raw
 Security:       reality
 Target:         www.firefox.com:443
 Server name:    www.firefox.com
-Fingerprint:    firefox
+Fingerprint:    chrome (generated client links)
 Initial clients: none
 Routing:        direct by default; optional next hop selected per client
 Russian split:  disabled by default; offered after a valid next-hop URI
@@ -235,12 +235,21 @@ type=raw
 security=reality
 encryption=none
 flow=xtls-rprx-vision
-fp=firefox
+fp=chrome
 ```
 
 ## Notes
 
 Client names may contain only letters, numbers, dot, underscore, and dash.
+
+Generated links use the portable `chrome` fingerprint name for compatibility with
+Xray and sing-box clients such as Karing. This selects the client's Chrome preset,
+not a pinned Chrome version. Xray's versioned `hellochrome_120` name is not accepted
+by Karing's published core parser. Existing client profiles retain their previous
+fingerprint until their link is updated
+and reimported. Changing a client's `fp` does not require changing server-side
+credentials or restarting Xray. The next-hop fingerprint is imported from its
+VLESS URI and is independent of the fingerprint used in generated client links.
 
 The scripts keep generated endpoint, IPv6 endpoint, VLESS port, server shortId, SNI, and REALITY key state in files next to the scripts. The server config remains the source of truth for active clients, credentials, and routes, including the optional local SOCKS5 listener.
 
