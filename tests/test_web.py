@@ -1,6 +1,8 @@
 """WEB configuration preservation and transaction failure tests; no real services."""
 
 import importlib.util
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 import json
 from pathlib import Path
 import subprocess
@@ -50,6 +52,82 @@ server {
 
 
 class WebTests(unittest.TestCase):
+    def test_success_reports_stages_endpoints_backup_and_link_locations_without_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = web.Installation()
+            install.telemt = Path(directory) / "telemt.toml"
+            install.nginx = Path(directory) / "nginx.conf"
+            install.clients = Path(directory) / "clients"
+            install.telemt.write_text(
+                web.managed(BASE, web.web_block(tomllib.loads(BASE), "xbubax.ru", "45.87.246.142:443"))
+            )
+            install.nginx.write_text(SITE)
+            link_path = install.clients / "main" / "telemt-main-links.txt"
+            private_link = b"web: tg://webproxy?server=example&secret=private-client-secret\n"
+            console, stdout = StringIO(), StringIO()
+            with (
+                redirect_stderr(console),
+                redirect_stdout(stdout),
+                patch.object(install, "backup_root", return_value=Path(directory)),
+                patch.object(install, "artifacts", return_value={link_path: private_link}),
+                patch.object(install, "wait_ready"),
+                patch.object(install, "wait_public_ready"),
+                patch.object(web, "run"),
+                patch.object(web.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)),
+            ):
+                install.transaction({install.nginx: SITE.encode()}, install.services, True)
+                install.report_summary("WEB enabled; activation checks passed")
+            output = console.getvalue()
+            for text in (
+                "Backup directory:",
+                "Nginx configuration: OK",
+                "Restarting telemt",
+                "Reloading nginx",
+                "Restarting xray",
+                "Checking public HTTPS",
+                "Fetching client links",
+                str(link_path),
+                "SUCCESS: WEB enabled",
+                "Native MTProxy port: 2443",
+                "https://xbubax.ru/telegram/web/",
+                "WEB profiles: 2",
+                "Backup retained at:",
+            ):
+                self.assertIn(text, output)
+            self.assertLess(output.index("Restarting telemt"), output.index("Reloading nginx"))
+            self.assertNotIn("private-client-secret", output)
+            self.assertNotIn("000102030405060708090a0b0c0d0e0f", output)
+            self.assertNotIn("tg://", output)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(link_path.read_bytes(), private_link)
+
+    def test_status_keeps_stdout_machine_readable_when_checks_report_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = web.Installation()
+            install.telemt = Path(directory) / "telemt.toml"
+            install.telemt.write_text(
+                web.managed(BASE, web.web_block(tomllib.loads(BASE), "xbubax.ru", "45.87.246.142:443"))
+            )
+            stdout, console = StringIO(), StringIO()
+
+            def check(test_candidate):
+                self.assertFalse(test_candidate)
+                web.report("Checking installed configuration")
+                return {}
+
+            with (
+                redirect_stdout(stdout),
+                redirect_stderr(console),
+                patch.object(web.sys, "argv", ["web-config.py", "status"]),
+                patch.object(web, "Installation", return_value=install),
+                patch.object(web, "run", return_value="telemt 3.5.16"),
+                patch.object(install, "prepare", side_effect=check),
+                patch.object(install, "ready"),
+            ):
+                web.main()
+            self.assertTrue(json.loads(stdout.getvalue())["enabled"])
+            self.assertIn("Checking installed configuration", console.getvalue())
+
     def test_public_probe_waits_for_xray_socket_after_systemd_reports_active(self):
         install = web.Installation()
         with (
@@ -96,7 +174,9 @@ class WebTests(unittest.TestCase):
             target.write_bytes(b"original")
             install.nginx = target
             secret_output = "invalid configuration with secret=do-not-print"
+            console = StringIO()
             with (
+                redirect_stderr(console),
                 patch.object(install, "backup_root", return_value=Path(directory)),
                 patch.object(web, "run", side_effect=subprocess.CalledProcessError(1, ["nginx", "-t"], secret_output)),
             ):
@@ -105,6 +185,12 @@ class WebTests(unittest.TestCase):
                 ) as caught:
                     install.transaction({target: b"candidate"}, [])
             self.assertNotIn("do-not-print", str(caught.exception))
+            self.assertNotIn("do-not-print", console.getvalue())
+            self.assertIn("FAILED at validating Nginx configuration", console.getvalue())
+            self.assertIn("Rolling back files and services", console.getvalue())
+            self.assertIn("Rollback verified", console.getvalue())
+            self.assertIn("Safe failure report:", console.getvalue())
+            self.assertIn("Private command output:", console.getvalue())
             (backup,) = Path(directory).glob("web-*")
             failure = json.loads((backup / "failure.json").read_text())
             self.assertEqual(failure["stage"], "validating Nginx configuration")

@@ -161,6 +161,14 @@ only inspects settings and health; it does not create backups or change services
 refuses conflicting settings. Running it again on a healthy matching installation
 does not restart services.
 
+Commands print flushed `[WEB]` progress to stderr: configuration checks, backup
+location, file updates, service activation, readiness attempts, HTTP results and
+client link file locations. Successful mutations finish with a `SUCCESS` summary
+showing the native port, WEB endpoint, profile count and where to retrieve links.
+Failures show the failed stage and rollback progress, including recovery errors.
+`status` keeps its JSON on stdout; the internal link command keeps its link output
+on stdout. Progress never prints access secrets, client URLs or raw command output.
+
 The defaults are private HTTP `127.0.0.1:18080`, fixed carrier `https`, base path
 `telegram/web`, and one `dd` profile for every access user. The public address is
 the installed Xray endpoint with port 443. The decoy is a bounded copy of the

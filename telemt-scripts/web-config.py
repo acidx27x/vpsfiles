@@ -31,6 +31,11 @@ class CheckError(ValueError):
     """Operator-safe validation failure without configuration contents."""
 
 
+def report(message: str) -> None:
+    """Flush human-readable progress to stderr, preserving machine-readable stdout."""
+    print(f"[WEB] {message}", file=sys.stderr, flush=True)
+
+
 def require(condition: object, message: str) -> None:
     if not condition:
         raise CheckError(message)
@@ -183,6 +188,22 @@ class Installation:
         self.binary = state("telemt-scripts", "telemt-bin-path.txt", "/bin/telemt")
         self.clients = ROOT / "telemt-scripts/clients"
 
+    def report_summary(self, result: str) -> None:
+        """Show endpoints and artifact locations without printing access links."""
+        config = load(self.telemt)
+        report(f"SUCCESS: {result}")
+        report(f"Native MTProxy port: {config['server']['port']}")
+        report(f"Access users: {len(config['access']['users'])}")
+        if config.get("web", {}).get("enabled"):
+            vhost = config["web"]["vhosts"][0]
+            report(f"WEB endpoint: https://{vhost['host']}/{vhost['base_path']}/")
+            report(f"WEB profiles: {len(vhost['profiles'])}; private listener: 127.0.0.1:18080")
+        else:
+            report("WEB is disabled")
+        report(f"Client links: {self.clients}/<client>/telemt-<client>-links.txt")
+        if config.get("web", {}).get("enabled"):
+            report("Import the web: link from your client's file to test Telegram")
+
     def ready(self) -> None:
         run(self.binary, "healthcheck", "--mode", "ready", str(self.telemt))
         if enabled(self.telemt):
@@ -223,7 +244,9 @@ class Installation:
 
     def transaction(self, changes: dict[Path, bytes | None], services: list[str], public_probe: bool = False) -> None:
         """Restore the current operation, never the original enable snapshot."""
+        report(f"Preparing backup for {len(changes)} file changes")
         backup = Path(tempfile.mkdtemp(prefix="web-", dir=self.backup_root()))
+        report(f"Backup directory: {backup}")
         original = {}
         ownership = {}
         new_directories = set()
@@ -250,7 +273,9 @@ class Installation:
         (backup / "services.json").write_text(json.dumps(active))
         stage = "writing prepared files"
         try:
+            report(f"{stage[0].upper()}{stage[1:]}...")
             for path, value in changes.items():
+                report(f"{'Removing' if value is None else 'Updating'} {path}")
                 if not path.parent.exists():
                     new_directories.add(path.parent)
                     path.parent.mkdir(
@@ -262,27 +287,40 @@ class Installation:
                 atomic(path, value, 0o644 if str(path).startswith("/var/lib/telemt/public/") else None)
             if self.nginx in changes:
                 stage = "validating Nginx configuration"
+                report(f"{stage[0].upper()}{stage[1:]}...")
                 run("nginx", "-t")
+                report("Nginx configuration: OK")
             for unit in services:
                 stage = f"activating service {unit}"
+                report(f"{'Reloading' if unit == 'nginx' else 'Restarting'} {unit}...")
                 run("systemctl", "reload" if unit == "nginx" else "restart", unit)
                 stage = f"checking service {unit} readiness"
+                report(f"{stage[0].upper()}{stage[1:]}...")
                 self.wait_ready() if unit == self.services[0] else run("systemctl", "is-active", "--quiet", unit)
+                report(f"Service {unit}: OK")
             if public_probe:
                 stage = "checking public HTTPS and WEB routes"
+                report(f"{stage[0].upper()}{stage[1:]}...")
                 self.wait_public_ready()
             stage = "fetching client links from Telemt API"
-            for path, value in self.artifacts().items():
+            report(f"{stage[0].upper()}{stage[1:]}...")
+            artifacts = self.artifacts()
+            for path, value in artifacts.items():
                 stage = "writing client link files"
+                report(f"Writing client links: {path}")
                 save(path)
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 atomic(path, value, 0o600)
             (backup / "manifest.json").write_text(json.dumps({str(p): i for i, p in enumerate(original, 1)}))
+            report(f"Completed {len(changes)} file changes; wrote {len(artifacts)} client link files")
+            report(f"Backup retained at: {backup}")
         except BaseException as error:
             failed = False
             detail = failure_summary(error)
+            report(f"FAILED at {stage}: {detail}")
             try:
                 atomic(backup / "failure.json", json.dumps({"stage": stage, "error": detail}).encode(), 0o600)
+                report(f"Safe failure report: {backup / 'failure.json'}")
                 output = getattr(error, "output", None)
                 if output:
                     atomic(
@@ -290,25 +328,31 @@ class Installation:
                         output.encode() if isinstance(output, str) else output,
                         0o600,
                     )
-            except OSError:
+                    report(f"Private command output: {backup / 'command-output.log'} (review before sharing)")
+            except OSError as diagnostic_error:
                 # Diagnostic storage must never prevent restoration.
-                pass
+                report(f"Could not save diagnostics: {failure_summary(diagnostic_error)}")
+            report("Rolling back files and services...")
             if self.telemt in changes and self.services[0] in services:
                 try:
                     # Listener inventory belongs to the process. Do not let its
                     # watcher consume a restored config with incompatible vhosts.
+                    report(f"Stopping {self.services[0]} before restoring its listener configuration")
                     run("systemctl", "stop", self.services[0])
-                except (OSError, subprocess.SubprocessError):
+                except (OSError, subprocess.SubprocessError) as recovery_error:
+                    report(f"Could not stop {self.services[0]}: {failure_summary(recovery_error)}")
                     failed = True
             for index, (path, value) in enumerate(original.items(), 1):
                 try:
+                    report(f"Restoring {path}")
                     if value is None:
                         path.unlink(missing_ok=True)
                     else:
                         shutil.copy2(backup / str(index), path)
                         if os.geteuid() == 0:
                             os.chown(path, *ownership[path])
-                except OSError:
+                except OSError as recovery_error:
+                    report(f"Could not restore {path}: {failure_summary(recovery_error)}")
                     failed = True
             for directory in new_directories:
                 try:
@@ -317,23 +361,29 @@ class Installation:
                     pass
             for unit in reversed(services):
                 try:
+                    report(f"Restoring service {unit} to {'active' if active[unit] else 'stopped'}")
                     run("systemctl", ("reload" if unit == "nginx" else "restart") if active[unit] else "stop", unit)
                     if active[unit]:
                         run("systemctl", "is-active", "--quiet", unit)
-                except (OSError, subprocess.SubprocessError):
+                except (OSError, subprocess.SubprocessError) as recovery_error:
+                    report(f"Could not restore service {unit}: {failure_summary(recovery_error)}")
                     failed = True
             if not failed:
                 try:
+                    report("Verifying restored services and endpoints...")
                     if self.services[0] in active and active[self.services[0]]:
                         self.wait_ready()
                     if public_probe:
                         self.wait_public_ready()
-                except (OSError, ValueError, subprocess.SubprocessError):
+                except (OSError, ValueError, subprocess.SubprocessError) as recovery_error:
+                    report(f"Restored configuration verification failed: {failure_summary(recovery_error)}")
                     failed = True
             if failed:
+                report(f"ROLLBACK INCOMPLETE: inspect services and backup {backup}")
                 raise RuntimeError(
                     f"Operation AND rollback failed at {stage}: {detail}; inspect services. Backup: {backup}"
                 ) from None
+            report("Rollback verified: previous files and service state restored")
             raise RuntimeError(
                 f"Operation failed at {stage}: {detail}; previous files and services restored. Backup: {backup}"
             ) from None
@@ -341,6 +391,7 @@ class Installation:
     def wait_public_ready(self) -> None:
         """Allow a simple systemd service to bind before probing its TLS endpoint."""
         for attempt in range(10):
+            report(f"Public HTTPS probe: attempt {attempt + 1}/10")
             try:
                 self.probe_public()
                 return
@@ -349,6 +400,7 @@ class Installation:
                 # HTTP/decoy validation failures remain immediate failures.
                 if error.returncode not in (7, 35, 52, 56) or attempt == 9:
                     raise
+                report(f"Public HTTPS is not ready: {failure_summary(error)}; retrying in 1 second")
                 time.sleep(1)
 
     def probe_public(self) -> None:
@@ -364,10 +416,12 @@ class Installation:
             "--resolve",
             f"{host}:443:{address}",
         ]
-        run(*options, "--fail", "--output", "/dev/null", f"https://{host}/")
+        code = run(*options, "--fail", "--output", "/dev/null", "--write-out", "%{http_code}", f"https://{host}/")
+        report(f"HTTPS {host}/: HTTP {code}")
         if enabled(self.telemt):
             for path in ("/telegram/web", "/telegram/web/", "/telegram/web/unknown", "/telegram/web/?bridge=invalid"):
                 code = run(*options, "--output", "/dev/null", "--write-out", "%{http_code}", f"https://{host}{path}")
+                report(f"HTTPS {path}: HTTP {code}")
                 require(
                     code in ("200", "404") and (path != "/telegram/web" or code == "404"),
                     f"Unexpected WEB decoy response for {path}: HTTP {code}",
@@ -381,12 +435,15 @@ class Installation:
 
     def wait_ready(self) -> None:
         last_error = None
-        for _ in range(10):
+        for attempt in range(10):
+            report(f"Telemt readiness: attempt {attempt + 1}/10")
             try:
                 self.ready()
+                report("Telemt readiness: OK")
                 return
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 last_error = error
+                report(f"Telemt is not ready: {failure_summary(error)}")
                 time.sleep(1)
         raise CheckError(f"Telemt did not become ready: {failure_summary(last_error)}") from None
 
@@ -400,14 +457,18 @@ class Installation:
         return host, address
 
     def prepare(self, test_candidate: bool = True) -> dict[Path, bytes]:
+        report("Checking installed configuration and prerequisites...")
+        report(f"Configs: Telemt={self.telemt}; Nginx={self.nginx}; Xray={self.xray}")
         config = load(self.telemt)
         version = re.search(r"(\d+)\.(\d+)\.(\d+)", run(self.binary, "--version"))
         require(
             version and tuple(map(int, version.groups())) >= (3, 5, 16),
             "Update Telemt manually to 3.5.16 or later first",
         )
+        report(f"Telemt version: {version[0]}")
         for unit in self.services:
             run("systemctl", "is-active", "--quiet", unit)
+            report(f"Service {unit}: active")
         require(config["server"]["api"]["enabled"], "Telemt API must be enabled")
         require(
             re.fullmatch(r"(127\.0\.0\.1|\[::1\]):[0-9]+", config["server"]["api"]["listen"]),
@@ -444,6 +505,7 @@ class Installation:
             "Missing next-hop route",
         )
         require(not xray.get("routing", {}).get("balancers"), "Unsupported balancer configuration")
+        report(f"SOCKS5 route verified: 127.0.0.1:{port} -> next-hop")
         host, address = self.endpoint()
         (reality,) = [
             i
@@ -478,6 +540,7 @@ class Installation:
             "does match certificate" in run("openssl", "x509", "-in", certificate, "-noout", "-checkhost", host),
             "Certificate hostname mismatch",
         )
+        report(f"Fallback verified: {host} -> {target}; certificate hostname and expiry: OK")
         require(
             BEGIN in self.telemt.read_text()
             or (not config.get("web") and not any(i.get("transport") == "web" for i in config["server"]["listeners"])),
@@ -561,6 +624,7 @@ class Installation:
                 json.dump(xray, candidate)
                 candidate.flush()
                 run("xray", "run", "-test", "-config", candidate.name)
+                report("Xray candidate configuration: OK")
         return {
             self.telemt: text.encode(),
             self.xray: (json.dumps(xray, indent=2) + "\n").encode(),
@@ -572,6 +636,8 @@ class Installation:
 def main() -> None:
     require(len(sys.argv) >= 2, "usage: web.sh enable|disable|status")
     action = sys.argv[1]
+    if action in ("enable", "disable", "client-add", "client-remove"):
+        report(f"Starting {action}")
     installation = Installation()
     if action == "link":
         config = load(Path(sys.argv[2]))
@@ -625,13 +691,15 @@ def main() -> None:
         return
     require(os.geteuid() == 0, "Run as root")
     inherited = os.environ.get("VPS_TELEMT_LOCK_FD")
+    report("Waiting for the Telemt configuration lock...")
     with os.fdopen(os.dup(int(inherited)), "a") if inherited else open("/run/lock/vpsfiles-telemt.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        report("Configuration lock acquired")
         if action == "enable":
             changes = installation.prepare()
             if all(p.exists() and p.read_bytes() == v for p, v in changes.items()):
                 installation.ready()
-                print("WEB already enabled and healthy")
+                installation.report_summary("WEB already enabled and healthy; no changes applied")
                 return
             public = Path("/var/lib/telemt/public")
             if public.exists():
@@ -652,11 +720,12 @@ def main() -> None:
                     "Require a small regular decoy index.html",
                 )
                 changes[public / "index.html"] = source.read_bytes()
-            print("Enabling WEB at /telegram/web/; native port and credentials preserved")
+            report("Enabling WEB at /telegram/web/; native port and credentials preserved")
             installation.transaction(changes, installation.services, True)
+            installation.report_summary("WEB enabled; activation checks passed")
         elif action == "disable":
             if not enabled(installation.telemt):
-                print("WEB already disabled")
+                installation.report_summary("WEB already disabled; no changes applied")
                 return
             require(BEGIN in installation.telemt.read_text(), "Unmanaged WEB configuration")
             site = managed(installation.nginx.read_text()).replace(
@@ -670,6 +739,7 @@ def main() -> None:
                 installation.services[:2],
                 True,
             )
+            installation.report_summary("WEB disabled; HTTPS fallback retained")
         elif action in ("client-add", "client-remove"):
             name = sys.argv[2]
             require(re.fullmatch(r"[A-Za-z0-9._-]+", name) and name not in (".", ".."), "Invalid user name")
@@ -702,6 +772,7 @@ def main() -> None:
             installation.transaction(changes, installation.services[:1])
             if action == "client-remove" and directory.exists():
                 directory.rmdir()
+            installation.report_summary(f"Client {name} {'added' if action == 'client-add' else 'removed'}")
         else:
             raise ValueError("usage: web.sh enable|disable|status")
 
@@ -715,12 +786,11 @@ if __name__ == "__main__":
     try:
         main()
     except (RuntimeError, CheckError) as error:
-        print(str(error), file=sys.stderr)
+        report(f"ERROR: {error}")
         sys.exit(1)
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         # Never print parser errors, subprocess stderr or HTTP payloads containing credentials.
-        print(
-            "ERROR: WEB operation failed; check versions, configuration and services. See install-backups for recovery.",
-            file=sys.stderr,
+        report(
+            f"ERROR: WEB operation failed: {failure_summary(error)}; check the last reported stage and configuration"
         )
         sys.exit(1)
