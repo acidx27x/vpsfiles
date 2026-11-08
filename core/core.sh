@@ -262,3 +262,10 @@ vps_systemctl_stop_disable() {
     systemctl disable "${service}" 2>/dev/null || true
   fi
 }
+
+vps_telemt_mutation_lock() {
+  vps_require_commands flock
+  exec 9> /run/lock/vpsfiles-telemt.lock
+  flock -x 9
+  export VPS_TELEMT_LOCK_FD=9
+}

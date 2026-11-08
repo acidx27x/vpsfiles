@@ -47,3 +47,12 @@ After Xray is installed, verify the public fallback:
 ```bash
 curl -v --resolve fallback.example.com:443:<VPS_IP> https://fallback.example.com/
 ```
+
+## Telemt WEB dependency
+
+`../telemt-scripts/web.sh enable` can add WEB routing to this existing fallback.
+It synchronizes REALITY `xver = 1` with the internal listener's PROXY protocol,
+trusts loopback only, and saves `nginx-proxy-protocol.txt`. The installer retains
+this listener mode and its internal HTTPS probe sends the matching PROXY header.
+Reinstall and uninstall refuse to proceed while Telemt WEB is enabled; disable
+WEB first. Disabling WEB retains a working PROXY-aware HTTPS fallback.

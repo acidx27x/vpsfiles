@@ -20,6 +20,12 @@ main() {
   local service=""
 
   vps_require_root "sudo bash ${0}"
+  local telemt_config=""
+  vps_telemt_mutation_lock
+  telemt_config="$(vps_read_file_or_default "${REPO_ROOT}/telemt-scripts/telemt-config-path.txt" "/etc/telemt/telemt.toml")"
+  if [[ -f "${telemt_config}" ]] && grep -Eq '^# BEGIN vpsfiles Telemt WEB$|^[[:space:]]*\[web\]' "${telemt_config}"; then
+    python3 -B "${REPO_ROOT}/telemt-scripts/web-config.py" guard
+  fi
 
   config_file="$(vps_read_file_or_default "${SCRIPT_DIR}/xray-config-path.txt" "${XRAY_CONFIG_DEFAULT}")"
   service="$(vps_read_file_or_default "${SCRIPT_DIR}/xray-service.txt" "${XRAY_SERVICE_DEFAULT}")"

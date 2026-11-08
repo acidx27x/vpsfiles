@@ -27,6 +27,7 @@ main() {
   local user_count=0
 
   vps_require_root "sudo ./remove-client.sh ..."
+  vps_telemt_mutation_lock
   vps_validate_client_name "${client_name}"
 
   config_file="$(vps_read_file_or_default telemt-config-path.txt "/etc/telemt/telemt.toml")"
@@ -43,6 +44,10 @@ main() {
   user_count="$(telemt_count_keys "${config_file}" "access.users")"
   if [[ "${exists_in_config}" -eq 1 && "${user_count}" -le 1 ]]; then
     vps_die "refusing to remove the last Telemt client; Telemt requires at least one configured user"
+  fi
+
+  if telemt_web_active "${config_file}"; then
+    exec python3 -B "${SCRIPT_DIR}/web-config.py" client-remove "${client_name}"
   fi
 
   vps_info "Removing Telemt client: ${client_name}"

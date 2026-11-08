@@ -24,6 +24,7 @@ restore_previous_telemt_update() {
   install -m 755 "${backup_bin}" "${bin_path}" || return 1
   if [[ "${was_active}" -eq 1 ]]; then
     vps_restart_active_service "${service}" || return 1
+    telemt_web_health "$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-config-path.txt" "/etc/telemt/telemt.toml")" || return 1
   fi
 }
 
@@ -37,6 +38,7 @@ main() {
 
   [[ $# -eq 0 ]] || vps_die "usage: update.sh"
   vps_require_root "sudo ./update.sh"
+  vps_telemt_mutation_lock
   vps_require_systemd
   vps_require_commands systemctl tar
   [[ -f telemt-config-path.txt && -f telemt-service.txt && -f telemt-bin-path.txt ]] || vps_die "Telemt state is missing; run install.sh first"
@@ -69,7 +71,7 @@ main() {
       || vps_die "Telemt update and automatic rollback both failed; inspect the service immediately"
     vps_die "Telemt binary update failed; the previous binary was restored"
   fi
-  if [[ "${was_active}" -eq 1 ]] && ! vps_restart_active_service "${service}"; then
+  if [[ "${was_active}" -eq 1 ]] && ! { vps_restart_active_service "${service}" && telemt_web_health "${config_file}"; }; then
     restore_previous_telemt_update "${backup_bin}" "${bin_path}" "${service}" "${was_active}" \
       || vps_die "Telemt update and automatic rollback both failed; inspect the service immediately"
     vps_die "updated Telemt service did not become active; the previous binary was restored"

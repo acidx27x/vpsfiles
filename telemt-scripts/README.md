@@ -127,3 +127,80 @@ References:
 - https://github.com/telemt/telemt
 - https://github.com/telemt/telemt/blob/main/docs/Quick_start/QUICK_START_GUIDE.en.md
 - https://github.com/telemt/telemt/blob/main/docs/FAQ.en.md
+
+## WEB through an existing REALITY fallback
+
+WEB is opt-in. It adds HTTPS ingress under `/telegram/web/` while preserving the
+native MTProxy port, access secrets and per-user unique-IP limits. No Xray
+installer is rerun and no REALITY client credentials are regenerated.
+
+Prerequisites: Python 3.11+, Linux `flock` (util-linux), Telemt 3.5.16 or later,
+active Telemt/Xray/Nginx services, and this bundle's existing two-server Nginx
+fallback site. The HTTPS server must be last in the managed site. REALITY must
+already target its loopback HTTPS listener and use the matching certificate
+hostname. The public IPv4 in Xray installer state must resolve from that hostname.
+External target/SNI migration is deliberately unsupported. A single unscoped,
+enabled SOCKS5 upstream must point to Xray's loopback `local-socks` inbound, whose
+route must lead exclusively to the VLESS `next-hop`. Rules that block traffic are
+allowed before that route; possible direct or ambiguous routing is rejected.
+
+First update Telemt separately, and verify the existing native connection:
+
+```bash
+# Run as root on the VPS, from this repository.
+TELEMT_VERSION=3.5.16 ./telemt-scripts/update.sh
+./telemt-scripts/web.sh status
+./telemt-scripts/web.sh enable
+./telemt-scripts/web.sh status
+```
+
+These are operator deployment commands: `enable` changes service configurations
+and restarts services. Expect a brief interruption during activation. `status`
+only inspects settings and health; it does not create backups or change services.
+`enable` reads installed configs and state, checks DNS and the certificate, and
+refuses conflicting settings. Running it again on a healthy matching installation
+does not restart services.
+
+The defaults are private HTTP `127.0.0.1:18080`, fixed carrier `https`, base path
+`telegram/web`, and one `dd` profile for every access user. The public address is
+the installed Xray endpoint with port 443. The decoy is a bounded copy of the
+fallback's regular `index.html` in `/var/lib/telemt/public`; other site assets,
+configuration and symlink targets are not copied.
+
+Activation enables PROXY protocol on the REALITY fallback and Nginx listener.
+Nginx trusts only loopback for PROXY headers and overwrites X-Forwarded-For with
+one resolved client IP. The WEB listener trusts only its immediate loopback
+proxy. The whole subtree is forwarded without a URI rewrite; the exact no-slash
+path returns 404 without a redirect. WEB access logs, proxy buffering, cache and
+upstream retries are disabled. The normal site and ACME remain in place.
+
+New clients automatically receive WEB profiles and `web:` links in the existing
+link files. Removal updates access and profiles together. Path links encode the
+host/path and the binary secret according to Telemt's WEB contract; users API
+links continue to supply the native variants.
+
+```bash
+./telemt-scripts/web.sh disable
+```
+
+Disable removes the managed WEB listener, profiles, Nginx locations and WEB links
+from the current installation. It preserves later client additions, HTTPS, and
+the synchronized REALITY/Nginx PROXY protocol settings. Nginx reinstall preserves
+the PROXY protocol state. Telemt uninstall disables managed WEB first; dependent
+Nginx or Xray removal requires WEB to be disabled. Fresh Telemt installation can
+opt into the same command with `TELEMT_ENABLE_WEB=1`, after preparing the other
+services.
+
+Each mutation keeps a private numbered backup under `install-backups/web-*`, with
+a path manifest and previous service state. Failures restore that operation's
+files and verify services, Telemt readiness and HTTPS where applicable. If recovery
+also fails, the command explicitly reports both failures and the backup directory.
+APT package changes during a separate binary update are outside this rollback.
+WEB-aware binary updates check runtime readiness before accepting the update.
+
+Before distributing links, verify with a compatible Telegram build: native and
+WEB connections, normal HTTPS, `/telegram/web`, `/telegram/web/`, unknown paths,
+and an invalid bridge query. Test two external client IPs and a forged XFF header.
+Verify the observed exit is the NL server. Test an unavailable next hop in an
+isolated Linux environment: Telegram traffic must fail, never exit directly from
+Russia. A listening SOCKS port and unit tests alone do not establish this.

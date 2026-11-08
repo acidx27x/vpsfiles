@@ -325,6 +325,21 @@ telemt_write_client_artifacts() {
     (.links.secure[]? | "secure: \(.)"),
     (.links.classic[]? | "classic: \(.)")
   ' "${api_file}" > "${links_file}"
+  if telemt_web_active "$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-config-path.txt" "/etc/telemt/telemt.toml")"; then
+    printf '%s' "${secret}" | python3 -B "${SCRIPT_DIR}/web-config.py" link "$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-config-path.txt" "/etc/telemt/telemt.toml")" >> "${links_file}"
+  fi
   chmod 600 "${links_file}"
   rm -f "${api_file}"
+}
+
+telemt_web_active() {
+  local config_file="$1"
+  [[ -f "${config_file}" ]] && grep -q '^# BEGIN vpsfiles Telemt WEB$' "${config_file}"
+}
+
+telemt_web_health() {
+  local config_file="$1"
+  if telemt_web_active "${config_file}"; then
+    python3 -B "${SCRIPT_DIR}/web-config.py" health
+  fi
 }

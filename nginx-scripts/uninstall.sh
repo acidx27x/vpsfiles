@@ -110,6 +110,7 @@ nginx_uninstall_remove_state() {
   local state_file=""
 
   for state_file in \
+    nginx-proxy-protocol.txt \
     fallback-domain.txt \
     reality-target.txt \
     reality-server-name.txt \
@@ -135,6 +136,12 @@ nginx_uninstall_main() {
 
   [[ $# -eq 0 ]] || vps_die "usage: uninstall.sh"
   vps_require_root "sudo ./uninstall.sh"
+  local telemt_config=""
+  vps_telemt_mutation_lock
+  telemt_config="$(vps_read_file_or_default "${REPO_ROOT}/telemt-scripts/telemt-config-path.txt" "/etc/telemt/telemt.toml")"
+  if [[ -f "${telemt_config}" ]] && grep -Eq '^# BEGIN vpsfiles Telemt WEB$|^[[:space:]]*\[web\]' "${telemt_config}"; then
+    python3 -B "${REPO_ROOT}/telemt-scripts/web-config.py" guard
+  fi
   vps_require_commands awk grep readlink systemctl
   nginx_uninstall_load_settings
   nginx_uninstall_validate_paths

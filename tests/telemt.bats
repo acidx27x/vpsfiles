@@ -214,3 +214,9 @@ EOF
   [[ "${output}" == *"Telemt service telemt is not active"* ]]
   [[ "${output}" == *"journalctl -u telemt -n 100 --no-pager"* ]]
 }
+
+@test "WEB command rejects unsupported actions without changing services" {
+  run "${REPO_ROOT}/telemt-scripts/web.sh" invalid
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"usage: web.sh enable|disable|status"* ]]
+}

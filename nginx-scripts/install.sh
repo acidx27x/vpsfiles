@@ -197,7 +197,9 @@ install_renewal_hook() {
 }
 
 verify_internal_site() {
-  curl \
+  local -a proxy_options=()
+  if [[ "${NGINX_PROXY_PROTOCOL:-0}" == "1" ]]; then proxy_options+=(--haproxy-protocol); fi
+  curl "${proxy_options[@]}" \
     --fail \
     --silent \
     --show-error \
@@ -227,11 +229,19 @@ print_summary() {
 
 nginx_install_main() {
   vps_require_root "sudo ./install.sh"
+  local telemt_config=""
+  vps_telemt_mutation_lock
+  telemt_config="$(vps_read_file_or_default "${REPO_ROOT}/telemt-scripts/telemt-config-path.txt" "/etc/telemt/telemt.toml")"
+  if [[ -f "${telemt_config}" ]] && grep -Eq '^# BEGIN vpsfiles Telemt WEB$|^[[:space:]]*\[web\]' "${telemt_config}"; then
+    python3 -B "${REPO_ROOT}/telemt-scripts/web-config.py" guard
+  fi
   require_files
   vps_require_supported_apt_os
   vps_require_systemd
 
   printf 'Nginx HTTPS fallback installation for Xray REALITY\n\n'
+  NGINX_PROXY_PROTOCOL="$(vps_read_file_or_default "${NGINX_STATE_DIR}/nginx-proxy-protocol.txt" "0")"
+  [[ "${NGINX_PROXY_PROTOCOL}" =~ ^[01]$ ]] || vps_die "Invalid PROXY protocol state"
   collect_settings
   printf '\nThis will install Nginx and Certbot, create a minimal site, open TCP port 80,\n'
   printf 'issue a Let\x27s Encrypt certificate, and listen for TLS only on 127.0.0.1:%s.\n' "${NGINX_INTERNAL_PORT}"

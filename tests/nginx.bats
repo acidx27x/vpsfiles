@@ -14,6 +14,9 @@ teardown() {
 }
 
 setup_nginx_uninstall_fixture() {
+  # No host lock or service is touched by fixture uninstall tests.
+  # shellcheck disable=SC2329 # Called by the sourced uninstaller.
+  vps_telemt_mutation_lock() { :; }
   NGINX_STATE_DIR="${TEST_TMPDIR}/state"
   NGINX_CONFIG="${TEST_TMPDIR}/etc/nginx/sites-available/xray-fallback"
   NGINX_ENABLED_CONFIG="${TEST_TMPDIR}/etc/nginx/sites-enabled/xray-fallback"
@@ -311,4 +314,20 @@ EOF
   [ "$(<"${installer_state}/reality-server-name.txt")" = "xbubax.us" ]
   [ "$(stat -c '%a' "${installer_state}/reality-target.txt")" = "600" ]
   [ "$(stat -c '%a' "${installer_state}/reality-server-name.txt")" = "600" ]
+}
+
+@test "nginx PROXY listener rendering and internal probe agree" {
+  NGINX_PROXY_PROTOCOL=1
+  run nginx_render_site_config "xbubax.ru" "8443" "/var/www/xray-fallback"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ssl http2 proxy_protocol;"* ]]
+  [[ "$output" == *"real_ip_header proxy_protocol;"* ]]
+  [[ "$output" == *"set_real_ip_from 127.0.0.1;"* ]]
+  # shellcheck source=nginx-scripts/install.sh
+  . "${REPO_ROOT}/nginx-scripts/install.sh"
+  # shellcheck disable=SC2329 # Called by the sourced HTTPS verification helper.
+  curl() { printf '%s\n' "$*" > "${TEST_TMPDIR}/curl.args"; }
+  NGINX_DOMAIN="xbubax.ru"
+  verify_internal_site
+  assert_file_contains "${TEST_TMPDIR}/curl.args" --haproxy-protocol
 }

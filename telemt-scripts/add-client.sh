@@ -32,6 +32,7 @@ main() {
   local max_unique_ips="${TELEMT_CLIENT_MAX_UNIQUE_IPS:-${MAX_UNIQUE_IPS_DEFAULT}}"
 
   vps_require_root "sudo ./add-client.sh ..."
+  vps_telemt_mutation_lock
   vps_validate_client_name "${client_name}"
 
   vps_require_commands curl jq openssl systemctl
@@ -48,6 +49,10 @@ main() {
 
   vps_prompt max_unique_ips "Max simultaneous unique IPs for this client" "${max_unique_ips}"
   vps_validate_positive_int "max unique IPs" "${max_unique_ips}"
+
+  if telemt_web_active "${config_file}"; then
+    exec python3 -B "${SCRIPT_DIR}/web-config.py" client-add "${client_name}" "${max_unique_ips}"
+  fi
 
   secret="$(generate_secret)"
   [[ -n "${secret}" ]] || vps_die "could not generate Telemt secret"

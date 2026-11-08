@@ -68,7 +68,13 @@ nginx_render_site_config() {
     -e "s|:DOMAIN:|${escaped_domain}|g" \
     -e "s|:INTERNAL_PORT:|${internal_port}|g" \
     -e "s|:WEB_ROOT:|${escaped_web_root}|g" \
-    "${template}"
+    "${template}" | {
+      if [[ "${NGINX_PROXY_PROTOCOL:-0}" == "1" ]]; then
+        sed 's/ssl http2;/ssl http2 proxy_protocol;\n    set_real_ip_from 127.0.0.1;\n    real_ip_header proxy_protocol;/'
+      else
+        cat
+      fi
+    }
 }
 
 nginx_certificate_name_from_config() {

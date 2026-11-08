@@ -15,6 +15,9 @@ BACKUP_ROOT="${BACKUP_ROOT:-${SCRIPT_DIR}/install-backups}"
 # shellcheck source=core/core.sh
 . "${REPO_ROOT}/core/core.sh"
 
+# shellcheck source=telemt-scripts/telemt.sh
+. "${SCRIPT_DIR}/telemt.sh"
+
 main() {
   local config_file=""
   local service=""
@@ -23,6 +26,7 @@ main() {
   local override_dir=""
 
   vps_require_root "sudo bash ${0}"
+  vps_telemt_mutation_lock
 
   config_file="$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-config-path.txt" "${TELEMT_CONFIG_DEFAULT}")"
   service="$(vps_read_file_or_default "${SCRIPT_DIR}/telemt-service.txt" "${TELEMT_SERVICE_DEFAULT}")"
@@ -54,6 +58,9 @@ main() {
     exit 1
   fi
 
+  if grep -q '^# BEGIN vpsfiles Telemt WEB$' "${config_file}" 2>/dev/null; then
+    "${SCRIPT_DIR}/web.sh" disable
+  fi
   vps_systemctl_stop_disable "${service}"
   vps_ufw_delete_saved_rule "${SCRIPT_DIR}/server-port.txt" "tcp"
 

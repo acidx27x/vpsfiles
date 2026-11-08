@@ -378,6 +378,7 @@ print_summary() {
 
 main() {
   require_root
+  vps_telemt_mutation_lock
   require_files
   require_supported_os
 
@@ -395,6 +396,9 @@ main() {
     exit 1
   fi
 
+  if telemt_web_active "${TELEMT_CONFIG}"; then
+    die "Disable WEB before reinstalling Telemt"
+  fi
   backup_existing_configs
   install_packages
   install_telemt
@@ -408,6 +412,9 @@ main() {
   start_telemt
   write_initial_client_artifacts
   print_summary
+  if [[ "${TELEMT_ENABLE_WEB:-0}" == "1" ]]; then
+    "${SCRIPT_DIR}/web.sh" enable
+  fi
 }
 
 main "$@"
